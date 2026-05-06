@@ -3,15 +3,20 @@ from typing import AsyncGenerator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from app.api.v1.router import api_router
 from app.core.config import settings
+from app.core.limiter import limiter
+from app.core.logging_config import configure_logging
 from app.db.redis import close_redis
 from app.db.session import engine
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    configure_logging(debug=settings.DEBUG)
     await _bootstrap_admin()
     await _seed_business_hours()
     await _seed_services()
@@ -54,7 +59,7 @@ async def _seed_business_hours() -> None:
                 day_of_week=day,
                 open_time=datetime.time(9, 0),
                 close_time=datetime.time(18, 0),
-                is_closed=(day == 6),  # Sunday closed by default
+                is_closed=(day == 6),
             )
 
 
@@ -78,12 +83,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 app.include_router(api_router, prefix=settings.API_V1_STR)

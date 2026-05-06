@@ -1,6 +1,7 @@
 from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
+import structlog
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,11 +10,12 @@ from app.db.models.service import Service
 from app.db.repositories.booking_repository import BookingRepository
 from app.db.repositories.business_repository import BusinessRepository
 
+logger = structlog.get_logger(__name__)
+
 HOLD_PREFIX = "slot_hold"
 
 
 def slot_hold_key(service_id: UUID, start_time: datetime) -> str:
-    # Normalise to UTC-aware ISO string so the key is unambiguous
     if start_time.tzinfo is None:
         start_time = start_time.replace(tzinfo=timezone.utc)
     return f"{HOLD_PREFIX}:{service_id}:{start_time.isoformat()}"
@@ -32,20 +34,27 @@ async def get_slots(
     business_repo = BusinessRepository(db)
 
     if await business_repo.is_date_blocked(target_date):
+        logger.debug("slots_skipped_blocked_date", date=target_date.isoformat())
         return []
 
     hours = await business_repo.get_hours_for_day(target_date.weekday())
     if not hours or hours.is_closed:
+        logger.debug("slots_skipped_closed_day", date=target_date.isoformat())
         return []
 
     duration = timedelta(minutes=service.duration_minutes)
-    slot_start = datetime(target_date.year, target_date.month, target_date.day,
-                          hours.open_time.hour, hours.open_time.minute, tzinfo=timezone.utc)
-    day_close = datetime(target_date.year, target_date.month, target_date.day,
-                         hours.close_time.hour, hours.close_time.minute, tzinfo=timezone.utc)
+    slot_start = datetime(
+        target_date.year, target_date.month, target_date.day,
+        hours.open_time.hour, hours.open_time.minute,
+        tzinfo=timezone.utc,
+    )
+    day_close = datetime(
+        target_date.year, target_date.month, target_date.day,
+        hours.close_time.hour, hours.close_time.minute,
+        tzinfo=timezone.utc,
+    )
     now = datetime.now(timezone.utc)
 
-    # Build the list of slot start times for this day
     starts: list[datetime] = []
     current = slot_start
     while current + duration <= day_close:
@@ -73,4 +82,10 @@ async def get_slots(
             "status": "booked" if is_booked else "available",
         })
 
+    logger.debug(
+        "slots_calculated",
+        date=target_date.isoformat(),
+        service_id=str(service.id),
+        total=len(slots),
+    )
     return slots

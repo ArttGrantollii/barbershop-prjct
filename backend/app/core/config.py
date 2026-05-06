@@ -1,3 +1,4 @@
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -8,7 +9,9 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
     DEBUG: bool = False
 
-    SECRET_KEY: str = "change-me"
+    # Required — no default. Generate with:
+    #   python -c "import secrets; print(secrets.token_hex(32))"
+    SECRET_KEY: str
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
@@ -30,6 +33,15 @@ class Settings(BaseSettings):
 
     FIRST_ADMIN_EMAIL: str = ""
     FIRST_ADMIN_PASSWORD: str = ""
+
+    @model_validator(mode="after")
+    def _validate_secrets(self) -> "Settings":
+        if len(self.SECRET_KEY) < 32:
+            raise ValueError(
+                "SECRET_KEY must be at least 32 characters. "
+                'Generate one: python -c "import secrets; print(secrets.token_hex(32))"'
+            )
+        return self
 
     @property
     def cors_origins(self) -> list[str]:
