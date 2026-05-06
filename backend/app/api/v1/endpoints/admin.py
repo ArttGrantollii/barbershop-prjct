@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_current_admin
@@ -11,7 +11,7 @@ from app.db.repositories.booking_repository import BookingRepository
 from app.db.repositories.business_repository import BusinessRepository
 from app.db.repositories.service_repository import ServiceRepository
 from app.db.session import get_db
-from app.schemas.booking import BookingDetailResponse
+from app.schemas.booking import BookingDetailResponse, BookingPage
 from app.schemas.business import (
     BlockedDateCreate,
     BlockedDateResponse,
@@ -119,14 +119,18 @@ async def remove_blocked_date(
 # ── Bookings ──────────────────────────────────────────────────────────────────
 
 
-@router.get("/bookings", response_model=list[BookingDetailResponse])
+@router.get("/bookings", response_model=BookingPage)
 async def list_bookings(
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    status: BookingStatus | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin),
-):
-    return await BookingRepository(db).get_all_with_details(limit=limit, offset=offset)
+) -> BookingPage:
+    repo = BookingRepository(db)
+    items = await repo.get_all_with_details(limit=limit, offset=offset, status=status)
+    total = await repo.count_all(status=status)
+    return BookingPage(items=items, total=total, limit=limit, offset=offset)
 
 
 @router.post("/bookings/{booking_id}/cancel", response_model=BookingDetailResponse)

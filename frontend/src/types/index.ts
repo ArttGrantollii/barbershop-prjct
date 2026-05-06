@@ -69,6 +69,13 @@ export interface BlockedDate {
   reason: string | null
 }
 
+export interface BookingPage {
+  items: Booking[]
+  total: number
+  limit: number
+  offset: number
+}
+
 export type SlotStatus = "available" | "held" | "booked"
 
 export interface TimeSlot {

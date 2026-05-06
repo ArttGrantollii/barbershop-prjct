@@ -52,3 +52,10 @@ class BookingResponse(BaseModel):
 class BookingDetailResponse(BookingResponse):
     service: ServiceSummary | None = None
     user: UserSummary | None = None
+
+
+class BookingPage(BaseModel):
+    items: list[BookingDetailResponse]
+    total: int
+    limit: int
+    offset: int

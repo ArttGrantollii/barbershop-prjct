@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -58,14 +58,29 @@ class BookingRepository(BaseRepository[Booking]):
         )
         return list(result.scalars().all())
 
-    async def get_all_with_details(self, limit: int = 100, offset: int = 0) -> list[Booking]:
-        result = await self.db.execute(
+    async def count_all(self, status: BookingStatus | None = None) -> int:
+        q = select(func.count()).select_from(Booking)
+        if status is not None:
+            q = q.where(Booking.status == status)
+        result = await self.db.execute(q)
+        return result.scalar_one()
+
+    async def get_all_with_details(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        status: BookingStatus | None = None,
+    ) -> list[Booking]:
+        q = (
             select(Booking)
             .options(selectinload(Booking.user), selectinload(Booking.service))
             .order_by(Booking.start_time.desc())
             .limit(limit)
             .offset(offset)
         )
+        if status is not None:
+            q = q.where(Booking.status == status)
+        result = await self.db.execute(q)
         return list(result.scalars().all())
 
     async def create_booking(

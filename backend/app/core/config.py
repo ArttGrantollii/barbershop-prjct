@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     AWS_SES_FROM_EMAIL: str = ""
     AWS_SNS_SENDER_ID: str = "VendosSalon"
 
+    # IANA timezone name for the salon's physical location.
+    # Business hours are interpreted in this timezone; set it to match where the
+    # salon actually is (e.g. "America/New_York", "Europe/London").
+    SALON_TIMEZONE: str = "UTC"
+
     SLOT_HOLD_TTL_SECONDS: int = 600
     CANCELLATION_WINDOW_HOURS: int = 2
 

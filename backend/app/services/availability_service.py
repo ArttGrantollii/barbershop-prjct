@@ -1,5 +1,6 @@
 from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 import structlog
 from redis.asyncio import Redis
@@ -42,16 +43,21 @@ async def get_slots(
         logger.debug("slots_skipped_closed_day", date=target_date.isoformat())
         return []
 
+    # Business hours are stored as wall-clock times in the salon's local timezone.
+    # Building datetimes with ZoneInfo means Python converts them correctly when
+    # comparing against UTC booking times — no manual offset arithmetic needed.
+    salon_tz = ZoneInfo(settings.SALON_TIMEZONE)
+
     duration = timedelta(minutes=service.duration_minutes)
     slot_start = datetime(
         target_date.year, target_date.month, target_date.day,
         hours.open_time.hour, hours.open_time.minute,
-        tzinfo=timezone.utc,
+        tzinfo=salon_tz,
     )
     day_close = datetime(
         target_date.year, target_date.month, target_date.day,
         hours.close_time.hour, hours.close_time.minute,
-        tzinfo=timezone.utc,
+        tzinfo=salon_tz,
     )
     now = datetime.now(timezone.utc)
 
@@ -86,6 +92,7 @@ async def get_slots(
         "slots_calculated",
         date=target_date.isoformat(),
         service_id=str(service.id),
+        salon_tz=settings.SALON_TIMEZONE,
         total=len(slots),
     )
     return slots
