@@ -1,8 +1,10 @@
 import { useState } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { format, parseISO, isPast } from "date-fns"
+import { parseISO, isPast } from "date-fns"
 import { Calendar, Clock, ChevronLeft, ChevronRight } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { useBusinessInfo } from "@/hooks/useBusinessInfo"
+import { salonDateShort, salonTime } from "@/lib/datetime"
 import { cn } from "@/lib/utils"
 import api from "@/lib/api"
 import type { BookingPage, BookingStatus } from "@/types"
@@ -32,6 +34,8 @@ function StatusLabel({ status }: { status: BookingStatus }) {
 export default function AdminBookingsPage() {
   const { toast } = useToast()
   const queryClient = useQueryClient()
+  const { data: business } = useBusinessInfo()
+  const tz = business?.timezone
   const [statusFilter, setStatusFilter] = useState<BookingStatus | undefined>(undefined)
   const [page, setPage] = useState(0)
 
@@ -123,11 +127,11 @@ export default function AdminBookingsPage() {
                       <span className="text-foreground font-medium uppercase">{booking.service?.name ?? "—"}</span>
                       <span className="flex items-center gap-1">
                         <Calendar className="h-3 w-3" />
-                        {format(start, "EEE, MMM d yyyy")}
+                        {salonDateShort(start, tz)}
                       </span>
                       <span className="flex items-center gap-1">
                         <Clock className="h-3 w-3" />
-                        {format(start, "h:mm a")}
+                        {salonTime(start, tz)}
                       </span>
                       {booking.service && (
                         <span>{booking.service.duration_minutes} min · ${Number(booking.service.price).toFixed(2)}</span>

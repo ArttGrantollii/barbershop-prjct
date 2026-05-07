@@ -1,12 +1,26 @@
 import uuid
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.config import settings
 from app.db.models.booking import Booking, BookingStatus
 from app.db.repositories.base import BaseRepository
+
+
+def _salon_day_bounds(target_date: date) -> tuple[datetime, datetime]:
+    """Return [start, end) UTC instants that bound `target_date` *in the salon's
+    local timezone*. Used wherever 'on this day' means a salon calendar day,
+    not a UTC calendar day — otherwise users can double-book by crossing the
+    UTC midnight boundary inside a single salon day."""
+    tz = ZoneInfo(settings.SALON_TIMEZONE)
+    day_start = datetime(
+        target_date.year, target_date.month, target_date.day, tzinfo=tz
+    )
+    return day_start, day_start + timedelta(days=1)
 
 
 
@@ -27,8 +41,7 @@ class BookingRepository(BaseRepository[Booking]):
         return result.scalars().one_or_none()
 
     async def get_for_date(self, target_date: date) -> list[Booking]:
-        day_start = datetime(target_date.year, target_date.month, target_date.day, tzinfo=timezone.utc)
-        day_end = day_start + timedelta(days=1)
+        day_start, day_end = _salon_day_bounds(target_date)
         result = await self.db.execute(
             select(Booking).where(
                 and_(
@@ -72,8 +85,8 @@ class BookingRepository(BaseRepository[Booking]):
         user_id: uuid.UUID,
         target_date: date,
     ) -> int:
-        day_start = datetime(target_date.year, target_date.month, target_date.day, tzinfo=timezone.utc)
-        day_end = day_start + timedelta(days=1)
+        """`target_date` is interpreted as a salon-local calendar day."""
+        day_start, day_end = _salon_day_bounds(target_date)
         result = await self.db.execute(
             select(func.count())
             .select_from(Booking)

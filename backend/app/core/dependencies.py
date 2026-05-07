@@ -2,7 +2,7 @@ import uuid
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError, JOSEError
+from jose import JOSEError, JWTError
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -62,7 +62,8 @@ async def get_optional_user(
         if jti and await is_token_blacklisted(jti, redis):
             return None
         return await UserRepository(db).get_by_id(uuid.UUID(user_id))
-    except (JWTError, JOSEError, Exception):
+    except (JOSEError, ValueError):
+        # JOSEError covers JWTError; ValueError covers malformed UUID in `sub`.
         return None
 
 

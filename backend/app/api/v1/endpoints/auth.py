@@ -8,7 +8,10 @@ from jose import JWTError
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_current_active_user, oauth2_scheme
+from app.core.dependencies import (
+    get_current_active_user,
+    optional_oauth2_scheme,
+)
 from app.core.limiter import limiter
 from app.core.security import (
     blacklist_token,
@@ -121,37 +124,39 @@ async def refresh(
 async def logout(
     request: Request,
     body: RefreshTokenRequest,
-    token: str = Depends(oauth2_scheme),
-    current_user: User = Depends(get_current_active_user),
+    token: str | None = Depends(optional_oauth2_scheme),
     redis: Redis = Depends(get_redis),
 ) -> None:
-    # Blacklist the current access token so it dies immediately.
-    try:
-        access_payload = decode_token(token)
-        access_jti: str | None = access_payload.get("jti")
-        access_exp_ts = access_payload.get("exp")
-        if access_jti and access_exp_ts:
-            access_exp = datetime.fromtimestamp(access_exp_ts, tz=timezone.utc)
-            await blacklist_token(access_jti, access_exp, redis)
-    except JWTError:
-        pass  # Already expired — nothing to revoke.
+    # Bearer-style on the refresh token: possession of a valid refresh token
+    # proves identity, so we don't require a live access token. Otherwise users
+    # whose access token expired would have no way to revoke their session.
 
-    # Blacklist the refresh token.
+    # Best-effort: revoke the access token if one was supplied and parseable.
+    if token:
+        try:
+            access_payload = decode_token(token)
+            access_jti = access_payload.get("jti")
+            access_exp_ts = access_payload.get("exp")
+            if access_jti and access_exp_ts:
+                access_exp = datetime.fromtimestamp(access_exp_ts, tz=timezone.utc)
+                await blacklist_token(access_jti, access_exp, redis)
+        except JWTError:
+            pass  # Expired or malformed — nothing to revoke.
+
+    # Authoritative: revoke the refresh token.
     try:
         refresh_payload = decode_token(body.refresh_token)
         if refresh_payload.get("type") != "refresh":
             return
-        if refresh_payload.get("sub") != str(current_user.id):
-            return
-        refresh_jti: str | None = refresh_payload.get("jti")
+        refresh_jti = refresh_payload.get("jti")
         refresh_exp_ts = refresh_payload.get("exp")
         if refresh_jti and refresh_exp_ts:
             refresh_exp = datetime.fromtimestamp(refresh_exp_ts, tz=timezone.utc)
             await blacklist_token(refresh_jti, refresh_exp, redis)
+            logger.info("user_logged_out", user_id=refresh_payload.get("sub"))
     except JWTError:
-        pass
-
-    logger.info("user_logged_out", user_id=str(current_user.id))
+        # Malformed/expired — nothing to revoke. Logout stays idempotent.
+        return
 
 
 @router.get("/me", response_model=UserResponse)

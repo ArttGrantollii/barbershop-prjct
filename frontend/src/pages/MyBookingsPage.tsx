@@ -1,8 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { format, parseISO, isPast } from "date-fns"
+import { parseISO, isPast } from "date-fns"
 import { Link } from "react-router-dom"
 import { Calendar, Clock } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { useBusinessInfo } from "@/hooks/useBusinessInfo"
+import { salonDateMedium, salonTime } from "@/lib/datetime"
 import { cn } from "@/lib/utils"
 import api from "@/lib/api"
 import type { Booking } from "@/types"
@@ -23,6 +25,8 @@ function StatusPill({ status }: { status: Booking["status"] }) {
 export default function MyBookingsPage() {
   const { toast } = useToast()
   const queryClient = useQueryClient()
+  const { data: business } = useBusinessInfo()
+  const tz = business?.timezone
 
   const { data: bookings, isLoading } = useQuery<Booking[]>({
     queryKey: ["my-bookings"],
@@ -96,11 +100,11 @@ export default function MyBookingsPage() {
                   <div className="flex flex-wrap gap-4 text-xs text-muted-foreground tracking-wider">
                     <span className="flex items-center gap-1.5">
                       <Calendar className="h-3 w-3" />
-                      {format(startTime, "EEEE, MMM d, yyyy")}
+                      {salonDateMedium(startTime, tz)}
                     </span>
                     <span className="flex items-center gap-1.5">
                       <Clock className="h-3 w-3" />
-                      {format(startTime, "h:mm a")}
+                      {salonTime(startTime, tz)}
                     </span>
                   </div>
 

@@ -23,10 +23,13 @@ def slot_hold_key(service_id: UUID, start_time: datetime) -> str:
     return f"{HOLD_PREFIX}:{service_id}:{start_time.isoformat()}"
 
 
-def slot_cooldown_key(user_id: UUID, service_id: UUID, start_time: datetime) -> str:
+def slot_cooldown_key(user_id: UUID, start_time: datetime) -> str:
+    """Cooldown is keyed by (user, time) only — *not* by service. Otherwise a
+    user could cancel a 30-min haircut at 10:00 and immediately rebook a
+    different service at the same time, defeating the cooldown's purpose."""
     if start_time.tzinfo is None:
         start_time = start_time.replace(tzinfo=timezone.utc)
-    return f"{COOLDOWN_PREFIX}:{user_id}:{service_id}:{start_time.isoformat()}"
+    return f"{COOLDOWN_PREFIX}:{user_id}:{start_time.isoformat()}"
 
 
 def _ensure_utc(dt: datetime) -> datetime:
@@ -93,7 +96,7 @@ async def get_slots(
             slots.append({"start_time": start, "end_time": end, "status": "booked"})
             continue
 
-        if user_id and await redis.exists(slot_cooldown_key(user_id, service.id, start)):
+        if user_id and await redis.exists(slot_cooldown_key(user_id, start)):
             slots.append({"start_time": start, "end_time": end, "status": "cooldown"})
             continue
 

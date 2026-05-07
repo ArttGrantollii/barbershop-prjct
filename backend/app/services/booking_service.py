@@ -1,5 +1,6 @@
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 import structlog
 from fastapi import HTTPException, status
@@ -25,8 +26,14 @@ def _utc(dt: datetime) -> datetime:
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
+def _salon_date(dt: datetime) -> date:
+    """Return the calendar date of `dt` as observed in the salon's local timezone."""
+    return _utc(dt).astimezone(ZoneInfo(settings.SALON_TIMEZONE)).date()
+
+
 def _cancel_count_key(user_id: UUID) -> str:
-    today = datetime.now(timezone.utc).date().isoformat()
+    """Daily cancel counter rolls over at salon midnight, not UTC midnight."""
+    today = datetime.now(ZoneInfo(settings.SALON_TIMEZONE)).date().isoformat()
     return f"cancel_count:{user_id}:{today}"
 
 
@@ -47,13 +54,21 @@ async def hold_slot(
     key = slot_hold_key(service_id, start_time)
 
     # Per-user cooldown: prevent immediately rebooking a slot the user just cancelled.
-    cooldown_key = slot_cooldown_key(user_id, service_id, start_time)
+    cooldown_key = slot_cooldown_key(user_id, start_time)
     if await redis.exists(cooldown_key):
         remaining = await redis.ttl(cooldown_key)
         mins = max(1, remaining // 60)
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=f"You recently cancelled this slot. Please wait {mins} minute{'s' if mins != 1 else ''} before rebooking it.",
+        )
+
+    # Same-day single-booking rule: enforce here too so the user fails fast at
+    # hold time instead of after filling out the confirm step.
+    if await BookingRepository(db).count_confirmed_for_user_on_date(user_id, _salon_date(start_time)) > 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="You already have a booking on this day. Please cancel it before holding another slot.",
         )
 
     # Check DB first so we give a clear error if the slot is already confirmed.
@@ -118,21 +133,23 @@ async def create_booking(
             detail="Booking start time must be in the future.",
         )
 
-    # Reject bookings on blocked dates
-    if await BusinessRepository(db).is_date_blocked(start_time.date()):
+    # Reject bookings on blocked dates. Compare in salon-local time so a UTC
+    # booking instant on the boundary still maps to the right salon calendar day.
+    salon_day = _salon_date(start_time)
+    if await BusinessRepository(db).is_date_blocked(salon_day):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="This date is not available for bookings.",
         )
 
-    existing = await BookingRepository(db).count_confirmed_for_user_on_date(user_id, start_time.date())
+    existing = await BookingRepository(db).count_confirmed_for_user_on_date(user_id, salon_day)
     if existing > 0:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="You already have a booking on this day. Please cancel it before making a new one.",
         )
 
-    cooldown_key = slot_cooldown_key(user_id, service_id, start_time)
+    cooldown_key = slot_cooldown_key(user_id, start_time)
     if await redis.exists(cooldown_key):
         remaining = await redis.ttl(cooldown_key)
         mins = max(1, remaining // 60)
@@ -260,7 +277,6 @@ async def cancel_booking(
     # Save scalar FKs before commit — the session expires all attributes on commit,
     # and accessing them afterwards would trigger a lazy load (MissingGreenlet).
     cancelled_user_id = booking.user_id
-    cancelled_service_id = booking.service_id
     cancelled_start = _utc(booking.start_time)
 
     booking.status = BookingStatus.CANCELLED
@@ -275,8 +291,9 @@ async def cancel_booking(
         if count == 1:
             await redis.expire(cancel_key, 86_400)
 
-        # Block this user from rebooking the same slot during the cooldown window.
-        cooldown_key = slot_cooldown_key(cancelled_user_id, cancelled_service_id, cancelled_start)
+        # Block this user from rebooking the same time slot during the cooldown
+        # window — applies regardless of which service they pick.
+        cooldown_key = slot_cooldown_key(cancelled_user_id, cancelled_start)
         await redis.set(cooldown_key, 1, ex=settings.SLOT_COOLDOWN_SECONDS)
 
     # Re-fetch with eager relationships for response serialization and notifications.

@@ -1,10 +1,11 @@
 import { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { format, parseISO } from "date-fns"
 import { Check, Clock } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { useSlotWebSocket } from "@/hooks/useSlotWebSocket"
+import { useBusinessInfo } from "@/hooks/useBusinessInfo"
+import { salonDateLong, salonTime, salonTzAbbr } from "@/lib/datetime"
 import { cn } from "@/lib/utils"
 import api from "@/lib/api"
 import type { Service, TimeSlot } from "@/types"
@@ -58,6 +59,10 @@ export default function BookPage() {
   const [notes, setNotes] = useState("")
 
   const today = new Date().toISOString().split("T")[0]
+
+  const { data: business } = useBusinessInfo()
+  const tz = business?.timezone
+  const tzAbbr = salonTzAbbr(tz)
 
   // Live slot updates via WebSocket — connects when date + service are chosen
   const { connected: wsConnected } = useSlotWebSocket(selectedService?.id, selectedDate)
@@ -210,7 +215,7 @@ export default function BookPage() {
                           slot.status === "cooldown" && "text-destructive/40 cursor-not-allowed line-through",
                         )}
                       >
-                        {format(parseISO(slot.start_time), "h:mm a")}
+                        {salonTime(slot.start_time, tz)}
                       </button>
                     )
                   })}
@@ -245,8 +250,8 @@ export default function BookPage() {
             <div className="border border-border">
               {[
                 { label: "Service",  value: selectedService.name },
-                { label: "Date",     value: format(new Date(selectedDate + "T12:00:00"), "EEEE, MMMM d, yyyy") },
-                { label: "Time",     value: format(parseISO(selectedSlot.start_time), "h:mm a") },
+                { label: "Date",     value: salonDateLong(selectedSlot.start_time, tz) },
+                { label: "Time",     value: `${salonTime(selectedSlot.start_time, tz)}${tzAbbr ? ` ${tzAbbr}` : ""}` },
                 { label: "Duration", value: `${selectedService.duration_minutes} minutes` },
               ].map(({ label, value }, i, arr) => (
                 <div

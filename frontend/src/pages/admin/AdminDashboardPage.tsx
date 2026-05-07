@@ -1,8 +1,15 @@
 import { useMemo } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { addDays, format, isToday, isWithinInterval, parseISO, startOfDay } from "date-fns"
+import { addDays, isWithinInterval, parseISO, startOfDay } from "date-fns"
 import { CalendarDays } from "lucide-react"
 import { useAuth } from "@/context/AuthContext"
+import { useBusinessInfo } from "@/hooks/useBusinessInfo"
+import {
+  isSalonToday,
+  salonClockParts,
+  salonDateLong,
+  salonTime,
+} from "@/lib/datetime"
 import api from "@/lib/api"
 import type { BookingPage } from "@/types"
 
@@ -18,14 +25,23 @@ function StatCard({ label, value, sub }: { label: string; value: string | number
 
 export default function AdminDashboardPage() {
   const { user } = useAuth()
+  const { data: business } = useBusinessInfo()
+  const tz = business?.timezone
   const now = new Date()
 
   const greeting = useMemo(() => {
-    const h = now.getHours()
+    // Greeting is based on the salon's local hour, not the admin's browser
+    // hour — relevant if the admin manages the salon from another timezone.
+    const hourStr = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      hour: "numeric",
+      hour12: false,
+    }).format(now)
+    const h = parseInt(hourStr, 10)
     if (h < 12) return "Morning"
     if (h < 17) return "Afternoon"
     return "Evening"
-  }, [])
+  }, [tz])
 
   const { data: confirmedPage, isLoading: loadingConfirmed } = useQuery<BookingPage>({
     queryKey: ["dashboard", "confirmed"],
@@ -46,9 +62,9 @@ export default function AdminDashboardPage() {
   const todayBookings = useMemo(() => {
     if (!confirmedPage) return []
     return confirmedPage.items
-      .filter((b) => isToday(parseISO(b.start_time)))
+      .filter((b) => isSalonToday(b.start_time, tz))
       .sort((a, b) => a.start_time.localeCompare(b.start_time))
-  }, [confirmedPage])
+  }, [confirmedPage, tz])
 
   const thisWeekCount = useMemo(() => {
     if (!confirmedPage) return 0
@@ -67,7 +83,7 @@ export default function AdminDashboardPage() {
       {/* header */}
       <div>
         <p className="text-[10px] tracking-[0.5em] uppercase text-muted-foreground mb-2">
-          {format(now, "EEEE, MMMM d, yyyy")}
+          {salonDateLong(now, tz)}
         </p>
         <h1 className="font-display text-6xl uppercase leading-none">
           {greeting},<br />{user?.name?.split(" ")[0]}.
@@ -127,14 +143,15 @@ export default function AdminDashboardPage() {
               const start = parseISO(booking.start_time)
               const end   = parseISO(booking.end_time)
               const past  = end < now
+              const { hourMin, ampm } = salonClockParts(start, tz)
               return (
                 <div
                   key={booking.id}
                   className={`flex items-center gap-6 px-6 py-5 ${i < todayBookings.length - 1 ? "border-b border-border" : ""} ${past ? "opacity-40" : ""}`}
                 >
                   <div className="shrink-0 w-14 text-right">
-                    <p className="text-sm font-medium tabular-nums">{format(start, "h:mm")}</p>
-                    <p className="text-[10px] tracking-widest uppercase text-muted-foreground">{format(start, "a")}</p>
+                    <p className="text-sm font-medium tabular-nums">{hourMin}</p>
+                    <p className="text-[10px] tracking-widest uppercase text-muted-foreground">{ampm}</p>
                   </div>
 
                   <div className="w-px h-8 bg-border shrink-0" />
@@ -150,7 +167,7 @@ export default function AdminDashboardPage() {
                   </div>
 
                   <p className="text-xs text-muted-foreground shrink-0 hidden sm:block tracking-wider">
-                    until {format(end, "h:mm a")}
+                    until {salonTime(end, tz)}
                   </p>
 
                   <div className="shrink-0 text-right">
