@@ -1,9 +1,10 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { format, parseISO } from "date-fns"
 import { Check, Clock } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { useSlotWebSocket } from "@/hooks/useSlotWebSocket"
 import { cn } from "@/lib/utils"
 import api from "@/lib/api"
 import type { Service, TimeSlot } from "@/types"
@@ -57,6 +58,19 @@ export default function BookPage() {
   const [notes, setNotes] = useState("")
 
   const today = new Date().toISOString().split("T")[0]
+
+  // Live slot updates via WebSocket — connects when date + service are chosen
+  const { connected: wsConnected } = useSlotWebSocket(selectedService?.id, selectedDate)
+
+  // If the slot the user has selected gets taken by someone else, deselect it
+  useEffect(() => {
+    if (!selectedSlot || !slots) return
+    const live = slots.find((s) => s.start_time === selectedSlot.start_time)
+    if (live && live.status !== "available") {
+      setSelectedSlot(null)
+      toast({ variant: "destructive", title: "Slot taken", description: "That time was just booked by someone else. Please pick another." })
+    }
+  }, [slots, selectedSlot])
 
   const { data: services, isLoading: servicesLoading } = useQuery<Service[]>({
     queryKey: ["services"],
@@ -155,7 +169,18 @@ export default function BookPage() {
 
           {selectedDate && (
             <div>
-              <p className="text-xs tracking-widest uppercase text-muted-foreground mb-4">Available Times</p>
+              <div className="flex items-center gap-3 mb-4">
+                <p className="text-xs tracking-widest uppercase text-muted-foreground">Available Times</p>
+                {wsConnected && (
+                  <span className="flex items-center gap-1.5 text-[10px] tracking-widest uppercase text-muted-foreground">
+                    <span className="relative flex h-1.5 w-1.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-foreground opacity-50" />
+                      <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-foreground" />
+                    </span>
+                    Live
+                  </span>
+                )}
+              </div>
               {slotsLoading ? (
                 <div className="border border-border p-6 text-xs text-muted-foreground tracking-widest uppercase">Loading slots…</div>
               ) : !slots?.length ? (
