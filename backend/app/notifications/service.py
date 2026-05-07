@@ -29,3 +29,15 @@ async def notify_booking_cancelled(info: BookingInfo) -> None:
             console.send_booking_cancelled(info)
     except Exception:
         logger.exception("Failed to send booking-cancelled notification for %s", info.booking_id)
+
+
+async def notify_booking_reminder(info: BookingInfo) -> None:
+    try:
+        if settings.NOTIFICATIONS_BACKEND == "aws":
+            from app.notifications import aws
+            await asyncio.to_thread(aws.send_booking_reminder, info)
+        else:
+            from app.notifications import console
+            console.send_booking_reminder(info)
+    except Exception:
+        logger.exception("Failed to send booking-reminder notification for %s", info.booking_id)

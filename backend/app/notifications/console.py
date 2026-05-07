@@ -35,3 +35,21 @@ def send_booking_cancelled(info: BookingInfo) -> None:
             info.customer_phone,
             info.booking_id,
         )
+
+
+def send_booking_reminder(info: BookingInfo) -> None:
+    when = info.start_time.strftime("%Y-%m-%d %H:%M")
+    logger.info(
+        "[EMAIL] Reminder: appointment tomorrow | to=%s | booking=%s | service=%s | time=%s",
+        info.customer_email,
+        info.booking_id,
+        info.service_name,
+        when,
+    )
+    if info.customer_phone:
+        logger.info(
+            "[SMS] Reminder: appointment tomorrow | to=%s | booking=%s | time=%s",
+            info.customer_phone,
+            info.booking_id,
+            when,
+        )

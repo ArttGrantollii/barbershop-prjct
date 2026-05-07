@@ -31,6 +31,27 @@ def _salon_date(dt: datetime) -> date:
     return _utc(dt).astimezone(ZoneInfo(settings.SALON_TIMEZONE)).date()
 
 
+def _check_min_lead(start_time: datetime) -> None:
+    """Reject bookings/holds that start inside the configured lead window.
+    Raised at the service layer so both hold_slot and create_booking enforce
+    it identically — a stale availability grid can't slip a too-soon slot
+    past the hold step."""
+    lead = timedelta(minutes=settings.MIN_LEAD_MINUTES)
+    if lead <= timedelta(0):
+        # Even with zero lead, a booking must still be in the future.
+        if start_time <= datetime.now(timezone.utc):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Booking start time must be in the future.",
+            )
+        return
+    if start_time - datetime.now(timezone.utc) < lead:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Bookings must be at least {settings.MIN_LEAD_MINUTES} minutes in advance.",
+        )
+
+
 def _cancel_count_key(user_id: UUID) -> str:
     """Daily cancel counter rolls over at salon midnight, not UTC midnight."""
     today = datetime.now(ZoneInfo(settings.SALON_TIMEZONE)).date().isoformat()
@@ -45,6 +66,7 @@ async def hold_slot(
     start_time: datetime,
 ) -> dict:
     start_time = _utc(start_time)
+    _check_min_lead(start_time)
 
     service = await ServiceRepository(db).get_by_id(service_id)
     if not service or not service.is_active:
@@ -126,12 +148,8 @@ async def create_booking(
 ) -> Booking:
     start_time = _utc(start_time)
 
-    # Reject bookings in the past
-    if start_time <= datetime.now(timezone.utc):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Booking start time must be in the future.",
-        )
+    # Reject bookings inside the lead window (subsumes "must be in the future").
+    _check_min_lead(start_time)
 
     # Reject bookings on blocked dates. Compare in salon-local time so a UTC
     # booking instant on the boundary still maps to the right salon calendar day.
@@ -232,6 +250,153 @@ async def create_booking(
         )
 
     return booking
+
+
+async def reschedule_booking(
+    db: AsyncSession,
+    redis: Redis,
+    booking_id: UUID,
+    user_id: UUID,
+    new_start_time: datetime,
+    is_admin: bool = False,
+) -> Booking:
+    """Atomically move a confirmed booking to a new start_time. Avoids the
+    cancel-then-rebook flow so the user isn't punished by the cooldown for a
+    legitimate reschedule. The DB EXCLUDE constraint is the authoritative
+    guard against landing on top of someone else's booking."""
+    new_start_time = _utc(new_start_time)
+    _check_min_lead(new_start_time)
+
+    repo = BookingRepository(db)
+    booking = await repo.get_by_id(booking_id)
+    if not booking:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
+
+    if not is_admin and booking.user_id != user_id:
+        # Mirror the GET endpoint: hide the booking's existence from non-owners.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
+
+    if booking.status != BookingStatus.CONFIRMED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot reschedule a {booking.status.value} booking",
+        )
+
+    if not is_admin:
+        # Same notice window as cancel — rescheduling a few minutes before the
+        # appointment is effectively a no-show for the staff who'd already
+        # blocked the time.
+        now = datetime.now(timezone.utc)
+        window = timedelta(hours=settings.CANCELLATION_WINDOW_HOURS)
+        if _utc(booking.start_time) - now < window:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Reschedules require at least {settings.CANCELLATION_WINDOW_HOURS}h notice",
+            )
+
+    # Need the service for duration. It must still exist and be active —
+    # rescheduling onto a deactivated service would be a confusing path.
+    service = await ServiceRepository(db).get_by_id(booking.service_id)
+    if not service or not service.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Service is no longer available; please book a different one.",
+        )
+
+    new_end_time = new_start_time + timedelta(minutes=service.duration_minutes)
+    new_salon_day = _salon_date(new_start_time)
+
+    # Blocked dates apply to reschedules too.
+    if await BusinessRepository(db).is_date_blocked(new_salon_day):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This date is not available for bookings.",
+        )
+
+    # Same-day single-booking — but exclude THIS booking from the count, since
+    # we're moving it (not adding a second one).
+    other_same_day = await repo.count_confirmed_for_user_on_date(
+        booking.user_id, new_salon_day, exclude_id=booking_id
+    )
+    if other_same_day > 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="You already have another booking on this day. Cancel it first or pick a different day.",
+        )
+
+    # Quick-fail before the UPDATE — friendlier 409 than the integrity error
+    # we'd otherwise get from the EXCLUDE constraint at commit time.
+    if await repo.has_overlap(new_start_time, new_end_time, exclude_id=booking_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The new time conflicts with another booking.",
+        )
+
+    # If someone is currently *holding* the new slot (other than this booking's
+    # owner), respect that hold — same semantics as create_booking.
+    hold_key = slot_hold_key(booking.service_id, new_start_time)
+    holder = await redis.get(hold_key)
+    if holder and holder != str(booking.user_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="That time is held by another customer.",
+        )
+
+    old_start = _utc(booking.start_time)
+
+    booking.start_time = new_start_time
+    booking.end_time = new_end_time
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The new time was just taken. Please pick another.",
+        )
+
+    # If this user was holding the new slot themselves (e.g. they reserved it
+    # in a fresh BookPage flow before deciding to reschedule instead), free
+    # the hold now that the booking has been confirmed onto it.
+    if holder == str(booking.user_id):
+        await redis.delete(hold_key)
+
+    refreshed = await repo.get_with_details(booking_id)
+
+    logger.info(
+        "booking_rescheduled",
+        booking_id=str(booking_id),
+        user_id=str(booking.user_id),
+        old_start=old_start.isoformat(),
+        new_start=new_start_time.isoformat(),
+        is_admin=is_admin,
+    )
+
+    # Free the old slot in everyone's UI and mark the new one as taken.
+    await manager.broadcast(
+        old_start.date().isoformat(),
+        {"type": "slot_update", "start_time": old_start.isoformat(), "status": "available"},
+    )
+    await manager.broadcast(
+        new_start_time.date().isoformat(),
+        {"type": "slot_update", "start_time": new_start_time.isoformat(), "status": "booked"},
+    )
+
+    if refreshed and refreshed.user and refreshed.service:
+        await notify_booking_confirmed(
+            BookingInfo(
+                booking_id=str(refreshed.id),
+                customer_name=refreshed.user.name,
+                customer_email=refreshed.user.email,
+                customer_phone=refreshed.user.phone,
+                service_name=refreshed.service.name,
+                start_time=_utc(refreshed.start_time),
+                end_time=_utc(refreshed.end_time),
+                duration_minutes=refreshed.service.duration_minutes,
+            )
+        )
+
+    return refreshed
 
 
 async def cancel_booking(

@@ -1,4 +1,5 @@
 import uuid
+from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -65,6 +66,19 @@ async def delete_service(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin),
 ):
+    # Refuse hard delete when bookings reference the service — the FK would
+    # eventually catch this with a 500, but a clear 409 is friendlier and lets
+    # the admin make a deliberate choice (deactivate vs. delete history too).
+    booking_count = await BookingRepository(db).count_for_service(service_id)
+    if booking_count > 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Cannot delete this service: it has {booking_count} booking"
+                f"{'s' if booking_count != 1 else ''} referencing it. "
+                "Deactivate it instead to hide it from new bookings while preserving history."
+            ),
+        )
     if not await ServiceRepository(db).delete(service_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found")
 
@@ -134,12 +148,21 @@ async def list_bookings(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     status: BookingStatus | None = None,
+    q: str | None = Query(None, max_length=100, description="Search across customer name and email"),
+    start_from: date | None = Query(None, description="Filter bookings starting on or after this salon-local date"),
+    start_to: date | None = Query(None, description="Filter bookings starting on or before this salon-local date (inclusive)"),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin),
 ) -> BookingPage:
+    if start_from and start_to and start_from > start_to:
+        # Can't reference status.HTTP_400_BAD_REQUEST here — the `status`
+        # parameter shadows the fastapi module import inside this function body.
+        raise HTTPException(status_code=400, detail="start_from must be on or before start_to")
     repo = BookingRepository(db)
-    items = await repo.get_all_with_details(limit=limit, offset=offset, status=status)
-    total = await repo.count_all(status=status)
+    items = await repo.get_all_with_details(
+        limit=limit, offset=offset, status=status, q=q, start_from=start_from, start_to=start_to,
+    )
+    total = await repo.count_all(status=status, q=q, start_from=start_from, start_to=start_to)
     return BookingPage(items=items, total=total, limit=limit, offset=offset)
 
 
@@ -170,5 +193,34 @@ async def admin_complete(
             detail=f"Booking is already {booking.status.value}",
         )
     booking.status = BookingStatus.COMPLETED
+    await db.commit()
+    return await BookingRepository(db).get_with_details(booking_id)
+
+
+@router.post("/bookings/{booking_id}/no-show", response_model=BookingDetailResponse)
+async def admin_no_show(
+    booking_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    """Mark a booking as a no-show. Only valid on confirmed bookings whose
+    start time has passed — marking a future booking as no-show would be a
+    data-quality bug, so we surface it as 400 instead of letting it through."""
+    repo = BookingRepository(db)
+    booking = await repo.get_by_id(booking_id)
+    if not booking:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
+    if booking.status != BookingStatus.CONFIRMED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Booking is already {booking.status.value}",
+        )
+    start = booking.start_time if booking.start_time.tzinfo else booking.start_time.replace(tzinfo=timezone.utc)
+    if start > datetime.now(timezone.utc):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot mark a future booking as no-show.",
+        )
+    booking.status = BookingStatus.NO_SHOW
     await db.commit()
     return await BookingRepository(db).get_with_details(booking_id)

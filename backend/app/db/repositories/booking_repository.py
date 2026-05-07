@@ -2,12 +2,13 @@ import uuid
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.db.models.booking import Booking, BookingStatus
+from app.db.models.user import User
 from app.db.repositories.base import BaseRepository
 
 
@@ -84,28 +85,80 @@ class BookingRepository(BaseRepository[Booking]):
         self,
         user_id: uuid.UUID,
         target_date: date,
+        exclude_id: uuid.UUID | None = None,
     ) -> int:
-        """`target_date` is interpreted as a salon-local calendar day."""
+        """`target_date` is interpreted as a salon-local calendar day. Set
+        `exclude_id` when checking whether a *new* time would violate the
+        same-day rule for a booking that's being moved — it lets the booking
+        not count against itself."""
         day_start, day_end = _salon_day_bounds(target_date)
+        clauses = [
+            Booking.user_id == user_id,
+            Booking.status == BookingStatus.CONFIRMED,
+            Booking.start_time >= day_start,
+            Booking.start_time < day_end,
+        ]
+        if exclude_id is not None:
+            clauses.append(Booking.id != exclude_id)
         result = await self.db.execute(
-            select(func.count())
-            .select_from(Booking)
-            .where(
-                and_(
-                    Booking.user_id == user_id,
-                    Booking.status == BookingStatus.CONFIRMED,
-                    Booking.start_time >= day_start,
-                    Booking.start_time < day_end,
-                )
-            )
+            select(func.count()).select_from(Booking).where(and_(*clauses))
         )
         return result.scalar_one()
 
-    async def count_all(self, status: BookingStatus | None = None) -> int:
-        q = select(func.count()).select_from(Booking)
+    def _admin_filter_clauses(
+        self,
+        status: BookingStatus | None,
+        q: str | None,
+        start_from: date | None,
+        start_to: date | None,
+    ):
+        """Build the WHERE clauses shared by `count_all` and `get_all_with_details`
+        so the count and the page always reflect the same filter set."""
+        clauses = []
         if status is not None:
-            q = q.where(Booking.status == status)
-        result = await self.db.execute(q)
+            clauses.append(Booking.status == status)
+        if q:
+            term = f"%{q.lower()}%"
+            clauses.append(
+                or_(
+                    func.lower(User.name).like(term),
+                    func.lower(User.email).like(term),
+                )
+            )
+        if start_from is not None:
+            tz = ZoneInfo(settings.SALON_TIMEZONE)
+            day_start = datetime(start_from.year, start_from.month, start_from.day, tzinfo=tz)
+            clauses.append(Booking.start_time >= day_start)
+        if start_to is not None:
+            tz = ZoneInfo(settings.SALON_TIMEZONE)
+            # `start_to` is inclusive — so the upper bound is the next day's
+            # midnight in salon-local time.
+            day_end = datetime(start_to.year, start_to.month, start_to.day, tzinfo=tz) + timedelta(days=1)
+            clauses.append(Booking.start_time < day_end)
+        return clauses
+
+    async def count_all(
+        self,
+        status: BookingStatus | None = None,
+        q: str | None = None,
+        start_from: date | None = None,
+        start_to: date | None = None,
+    ) -> int:
+        clauses = self._admin_filter_clauses(status, q, start_from, start_to)
+        stmt = select(func.count()).select_from(Booking)
+        if q:
+            stmt = stmt.join(User, User.id == Booking.user_id)
+        if clauses:
+            stmt = stmt.where(*clauses)
+        result = await self.db.execute(stmt)
+        return result.scalar_one()
+
+    async def count_for_service(self, service_id: uuid.UUID) -> int:
+        result = await self.db.execute(
+            select(func.count())
+            .select_from(Booking)
+            .where(Booking.service_id == service_id)
+        )
         return result.scalar_one()
 
     async def get_all_with_details(
@@ -113,17 +166,23 @@ class BookingRepository(BaseRepository[Booking]):
         limit: int = 50,
         offset: int = 0,
         status: BookingStatus | None = None,
+        q: str | None = None,
+        start_from: date | None = None,
+        start_to: date | None = None,
     ) -> list[Booking]:
-        q = (
+        clauses = self._admin_filter_clauses(status, q, start_from, start_to)
+        stmt = (
             select(Booking)
             .options(selectinload(Booking.user), selectinload(Booking.service))
             .order_by(Booking.start_time.desc())
             .limit(limit)
             .offset(offset)
         )
-        if status is not None:
-            q = q.where(Booking.status == status)
-        result = await self.db.execute(q)
+        if q:
+            stmt = stmt.join(User, User.id == Booking.user_id)
+        if clauses:
+            stmt = stmt.where(*clauses)
+        result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
     async def create_booking(

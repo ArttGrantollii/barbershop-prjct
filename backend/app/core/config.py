@@ -37,6 +37,18 @@ class Settings(BaseSettings):
     CANCELLATION_WINDOW_HOURS: int = 2
     CANCELLATION_LIMIT_PER_DAY: int = 3
     SLOT_COOLDOWN_SECONDS: int = 1800  # 30 minutes
+    # Minimum advance notice required for new bookings, in minutes. Set to 0
+    # to allow last-minute bookings up to "now". Filters slots in the grid and
+    # also rejects holds/bookings that fall inside the window — defense in
+    # depth in case a stale grid lets a too-soon slot through.
+    MIN_LEAD_MINUTES: int = 0
+    # 24h reminder worker. Disable for unit tests / one-shot CLI runs.
+    # Lookahead and tolerance combine to match bookings whose start_time is
+    # roughly 24h away (24h ± REMINDER_TOLERANCE_MINUTES).
+    REMINDERS_ENABLED: bool = True
+    REMINDER_LEAD_HOURS: int = 24
+    REMINDER_TOLERANCE_MINUTES: int = 60
+    REMINDER_INTERVAL_SECONDS: int = 300  # 5 minutes
 
     FIRST_ADMIN_EMAIL: str = ""
     FIRST_ADMIN_PASSWORD: str = ""

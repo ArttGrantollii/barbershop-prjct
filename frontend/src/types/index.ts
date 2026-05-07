@@ -25,7 +25,7 @@ export interface Service {
   is_active: boolean
 }
 
-export type BookingStatus = "confirmed" | "cancelled" | "completed"
+export type BookingStatus = "confirmed" | "cancelled" | "completed" | "no_show"
 
 export interface ServiceSummary {
   id: string

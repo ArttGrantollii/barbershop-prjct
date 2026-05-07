@@ -71,6 +71,7 @@ async def get_slots(
         tzinfo=salon_tz,
     )
     now = datetime.now(timezone.utc)
+    min_bookable = now + timedelta(minutes=settings.MIN_LEAD_MINUTES)
 
     starts: list[datetime] = []
     current = slot_start
@@ -84,7 +85,9 @@ async def get_slots(
     for start in starts:
         end = start + duration
 
-        if start <= now:
+        # Hide slots inside the lead window. Compares absolute instants, so
+        # the result is identical regardless of which timezone `start` is in.
+        if start < min_bookable:
             continue
 
         key = slot_hold_key(service.id, start)

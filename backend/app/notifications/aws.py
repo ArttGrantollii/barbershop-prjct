@@ -71,6 +71,37 @@ def send_booking_confirmed(info: BookingInfo) -> None:
         )
 
 
+def send_booking_reminder(info: BookingInfo) -> None:
+    date_str = info.start_time.strftime("%A, %B %-d at %-I:%M %p")
+    subject = f"Reminder: your Vendos Salon appointment tomorrow"
+    html = f"""
+    <h2>Your appointment is tomorrow</h2>
+    <p>Hi {info.customer_name},</p>
+    <p>This is a friendly reminder that you have an appointment booked:</p>
+    <ul>
+      <li><strong>Service:</strong> {info.service_name}</li>
+      <li><strong>Date &amp; Time:</strong> {date_str}</li>
+      <li><strong>Duration:</strong> {info.duration_minutes} minutes</li>
+      <li><strong>Booking ID:</strong> {info.booking_id}</li>
+    </ul>
+    <p>If you need to reschedule or cancel, please do so at least 2 hours in advance.</p>
+    <p>See you soon!<br>Vendos Salon</p>
+    """
+    text = (
+        f"Reminder: Vendos Salon appointment tomorrow.\n"
+        f"Service: {info.service_name}\n"
+        f"Time: {date_str}\n"
+        f"Booking ID: {info.booking_id}"
+    )
+    _send_email(info.customer_email, subject, html, text)
+
+    if info.customer_phone:
+        _send_sms(
+            info.customer_phone,
+            f"Vendos Salon reminder: {info.service_name} tomorrow on {date_str}.",
+        )
+
+
 def send_booking_cancelled(info: BookingInfo) -> None:
     subject = "Your Vendos Salon appointment has been cancelled"
     reason_line = f"<p><strong>Reason:</strong> {info.cancellation_reason}</p>" if info.cancellation_reason else ""

@@ -42,7 +42,12 @@ export function Navbar() {
         <div className="hidden md:flex items-center gap-4">
           {user ? (
             <>
-              <span className="text-xs tracking-widest uppercase text-muted-foreground">{user.name}</span>
+              <Link
+                to="/profile"
+                className="text-xs tracking-widest uppercase text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {user.name}
+              </Link>
               <button
                 onClick={handleLogout}
                 className="text-xs tracking-widest uppercase text-muted-foreground hover:text-foreground transition-colors"
@@ -87,7 +92,9 @@ export function Navbar() {
           <div className="pt-5 border-t border-border flex flex-col gap-4">
             {user ? (
               <>
-                <span className="text-muted-foreground">{user.name}</span>
+                <Link to="/profile" onClick={() => setOpen(false)} className="text-muted-foreground hover:text-foreground transition-colors">
+                  Profile
+                </Link>
                 <button onClick={() => { handleLogout(); setOpen(false) }} className="text-left text-muted-foreground hover:text-foreground transition-colors">Sign out</button>
               </>
             ) : (

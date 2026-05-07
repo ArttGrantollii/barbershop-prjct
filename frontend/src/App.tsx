@@ -4,12 +4,15 @@ import { AuthProvider } from "@/context/AuthContext"
 import { Navbar } from "@/components/layout/Navbar"
 import { ProtectedRoute } from "@/components/ProtectedRoute"
 import { AdminLayout } from "@/components/admin/AdminLayout"
+import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { PageTransition } from "@/components/ui/PageTransition"
 import HomePage from "@/pages/HomePage"
 import LoginPage from "@/pages/LoginPage"
 import RegisterPage from "@/pages/RegisterPage"
 import BookPage from "@/pages/BookPage"
+import BookingConfirmationPage from "@/pages/BookingConfirmationPage"
 import MyBookingsPage from "@/pages/MyBookingsPage"
+import ProfilePage from "@/pages/ProfilePage"
 import AdminDashboardPage from "@/pages/admin/AdminDashboardPage"
 import AdminBookingsPage from "@/pages/admin/AdminBookingsPage"
 import AdminServicesPage from "@/pages/admin/AdminServicesPage"
@@ -34,6 +37,14 @@ function AnimatedRoutes() {
           element={<ProtectedRoute customerOnly><PageTransition><MyBookingsPage /></PageTransition></ProtectedRoute>}
         />
         <Route
+          path="/bookings/:id/confirmation"
+          element={<ProtectedRoute customerOnly><PageTransition><BookingConfirmationPage /></PageTransition></ProtectedRoute>}
+        />
+        <Route
+          path="/profile"
+          element={<ProtectedRoute><PageTransition><ProfilePage /></PageTransition></ProtectedRoute>}
+        />
+        <Route
           path="/admin"
           element={<ProtectedRoute adminOnly><AdminLayout /></ProtectedRoute>}
         >
@@ -56,7 +67,10 @@ export default function App() {
       <div className="min-h-screen flex flex-col">
         <Navbar />
         <main className="flex-1">
-          <AnimatedRoutes />
+          {/* Scoped to <main> so the navbar stays usable even if a page crashes. */}
+          <ErrorBoundary>
+            <AnimatedRoutes />
+          </ErrorBoundary>
         </main>
       </div>
     </AuthProvider>

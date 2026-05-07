@@ -7,8 +7,14 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 
+from app.core.config import settings
 from app.db.models.booking import BookingStatus
-from app.services.booking_service import cancel_booking, create_booking, hold_slot
+from app.services.booking_service import (
+    cancel_booking,
+    create_booking,
+    hold_slot,
+    reschedule_booking,
+)
 
 MODULE = "app.services.booking_service"
 
@@ -88,6 +94,18 @@ class TestHoldSlot:
 
         assert exc.value.status_code == 409
         assert "already have a booking" in exc.value.detail
+
+    async def test_rejects_inside_lead_window(
+        self, mock_db, mock_redis, mock_service, user_id, monkeypatch
+    ):
+        monkeypatch.setattr(settings, "MIN_LEAD_MINUTES", 60)
+        near_future = datetime.now(timezone.utc) + timedelta(minutes=15)
+
+        with pytest.raises(HTTPException) as exc:
+            await hold_slot(mock_db, mock_redis, user_id, mock_service.id, near_future)
+
+        assert exc.value.status_code == 400
+        assert "60 minutes in advance" in exc.value.detail
 
     async def test_service_not_found(self, mock_db, mock_redis, user_id, future_start):
         with patch(f"{MODULE}.ServiceRepository") as MockSvcRepo:
@@ -260,6 +278,25 @@ class TestCreateBooking:
         assert exc.value.status_code == 409
         assert "not available" in exc.value.detail
 
+    async def test_rejects_inside_lead_window(self, mock_db, mock_redis, user_id, monkeypatch):
+        monkeypatch.setattr(settings, "MIN_LEAD_MINUTES", 90)
+        near_future = datetime.now(timezone.utc) + timedelta(minutes=30)
+
+        with pytest.raises(HTTPException) as exc:
+            await create_booking(mock_db, mock_redis, user_id, uuid.uuid4(), near_future)
+
+        assert exc.value.status_code == 400
+        assert "90 minutes in advance" in exc.value.detail
+
+    async def test_rejects_past_start_time(self, mock_db, mock_redis, user_id):
+        past = datetime.now(timezone.utc) - timedelta(minutes=5)
+
+        with pytest.raises(HTTPException) as exc:
+            await create_booking(mock_db, mock_redis, user_id, uuid.uuid4(), past)
+
+        assert exc.value.status_code == 400
+        assert "future" in exc.value.detail
+
     async def test_own_held_slot_is_accepted(
         self, mock_db, mock_redis, mock_service, mock_user, mock_booking, user_id, future_start
     ):
@@ -386,3 +423,149 @@ class TestCancelBooking:
                 await cancel_booking(mock_db, mock_redis, uuid.uuid4(), user_id)
 
         assert exc.value.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# reschedule_booking
+# ---------------------------------------------------------------------------
+
+class TestRescheduleBooking:
+    async def test_success(self, mock_db, mock_redis, mock_booking, mock_service, mock_user, user_id):
+        mock_booking.start_time = datetime.now(timezone.utc) + timedelta(hours=24)
+        new_start = datetime.now(timezone.utc) + timedelta(hours=48)
+        mock_db.commit = AsyncMock()
+
+        with (
+            patch(f"{MODULE}.BookingRepository") as MockBookingRepo,
+            patch(f"{MODULE}.ServiceRepository") as MockSvcRepo,
+            patch(f"{MODULE}.BusinessRepository") as MockBizRepo,
+            patch(f"{MODULE}.UserRepository") as MockUserRepo,
+            patch(f"{MODULE}.manager") as mock_manager,
+            patch(f"{MODULE}.notify_booking_confirmed"),
+        ):
+            MockBookingRepo.return_value.get_by_id = AsyncMock(return_value=mock_booking)
+            MockBookingRepo.return_value.get_with_details = AsyncMock(return_value=mock_booking)
+            MockBookingRepo.return_value.has_overlap = AsyncMock(return_value=False)
+            MockBookingRepo.return_value.count_confirmed_for_user_on_date = AsyncMock(return_value=0)
+            MockSvcRepo.return_value.get_by_id = AsyncMock(return_value=mock_service)
+            _mock_business_repo_clear(MockBizRepo)
+            MockUserRepo.return_value.get_by_id = AsyncMock(return_value=mock_user)
+            mock_manager.broadcast = AsyncMock()
+
+            result = await reschedule_booking(mock_db, mock_redis, mock_booking.id, user_id, new_start)
+
+        assert result is mock_booking
+        assert mock_booking.start_time == new_start
+        mock_db.commit.assert_awaited_once()
+
+    async def test_not_owners_booking_raises_404(self, mock_db, mock_redis, mock_booking):
+        other_user = uuid.uuid4()
+        new_start = datetime.now(timezone.utc) + timedelta(hours=48)
+
+        with patch(f"{MODULE}.BookingRepository") as MockBookingRepo:
+            MockBookingRepo.return_value.get_by_id = AsyncMock(return_value=mock_booking)
+
+            with pytest.raises(HTTPException) as exc:
+                await reschedule_booking(mock_db, mock_redis, mock_booking.id, other_user, new_start)
+
+        assert exc.value.status_code == 404
+
+    async def test_cancelled_booking_cannot_reschedule(self, mock_db, mock_redis, mock_booking, user_id):
+        mock_booking.status = BookingStatus.CANCELLED
+        new_start = datetime.now(timezone.utc) + timedelta(hours=48)
+
+        with patch(f"{MODULE}.BookingRepository") as MockBookingRepo:
+            MockBookingRepo.return_value.get_by_id = AsyncMock(return_value=mock_booking)
+
+            with pytest.raises(HTTPException) as exc:
+                await reschedule_booking(mock_db, mock_redis, mock_booking.id, user_id, new_start)
+
+        assert exc.value.status_code == 400
+        assert "cancelled" in exc.value.detail
+
+    async def test_too_close_to_start_raises_400(self, mock_db, mock_redis, mock_booking, user_id):
+        mock_booking.start_time = datetime.now(timezone.utc) + timedelta(minutes=30)
+        new_start = datetime.now(timezone.utc) + timedelta(hours=48)
+
+        with patch(f"{MODULE}.BookingRepository") as MockBookingRepo:
+            MockBookingRepo.return_value.get_by_id = AsyncMock(return_value=mock_booking)
+
+            with pytest.raises(HTTPException) as exc:
+                await reschedule_booking(mock_db, mock_redis, mock_booking.id, user_id, new_start)
+
+        assert exc.value.status_code == 400
+        assert "notice" in exc.value.detail
+
+    async def test_overlap_detected_raises_409(self, mock_db, mock_redis, mock_booking, mock_service, user_id):
+        mock_booking.start_time = datetime.now(timezone.utc) + timedelta(hours=24)
+        new_start = datetime.now(timezone.utc) + timedelta(hours=48)
+
+        with (
+            patch(f"{MODULE}.BookingRepository") as MockBookingRepo,
+            patch(f"{MODULE}.ServiceRepository") as MockSvcRepo,
+            patch(f"{MODULE}.BusinessRepository") as MockBizRepo,
+        ):
+            MockBookingRepo.return_value.get_by_id = AsyncMock(return_value=mock_booking)
+            MockBookingRepo.return_value.has_overlap = AsyncMock(return_value=True)
+            MockBookingRepo.return_value.count_confirmed_for_user_on_date = AsyncMock(return_value=0)
+            MockSvcRepo.return_value.get_by_id = AsyncMock(return_value=mock_service)
+            _mock_business_repo_clear(MockBizRepo)
+
+            with pytest.raises(HTTPException) as exc:
+                await reschedule_booking(mock_db, mock_redis, mock_booking.id, user_id, new_start)
+
+        assert exc.value.status_code == 409
+        assert "conflict" in exc.value.detail.lower()
+
+    async def test_held_by_another_user_raises_409(self, mock_db, mock_redis, mock_booking, mock_service, user_id):
+        mock_booking.start_time = datetime.now(timezone.utc) + timedelta(hours=24)
+        new_start = datetime.now(timezone.utc) + timedelta(hours=48)
+        other = uuid.uuid4()
+
+        async def redis_get(key: str) -> str | None:
+            return str(other) if key.startswith("slot_hold:") else None
+        mock_redis.get.side_effect = redis_get
+
+        with (
+            patch(f"{MODULE}.BookingRepository") as MockBookingRepo,
+            patch(f"{MODULE}.ServiceRepository") as MockSvcRepo,
+            patch(f"{MODULE}.BusinessRepository") as MockBizRepo,
+        ):
+            MockBookingRepo.return_value.get_by_id = AsyncMock(return_value=mock_booking)
+            MockBookingRepo.return_value.has_overlap = AsyncMock(return_value=False)
+            MockBookingRepo.return_value.count_confirmed_for_user_on_date = AsyncMock(return_value=0)
+            MockSvcRepo.return_value.get_by_id = AsyncMock(return_value=mock_service)
+            _mock_business_repo_clear(MockBizRepo)
+
+            with pytest.raises(HTTPException) as exc:
+                await reschedule_booking(mock_db, mock_redis, mock_booking.id, user_id, new_start)
+
+        assert exc.value.status_code == 409
+        assert "held" in exc.value.detail.lower()
+
+    async def test_admin_can_reschedule_any_booking(self, mock_db, mock_redis, mock_booking, mock_service, mock_user):
+        admin_id = uuid.uuid4()
+        mock_booking.start_time = datetime.now(timezone.utc) + timedelta(minutes=30)  # admin bypasses notice
+        new_start = datetime.now(timezone.utc) + timedelta(hours=48)
+        mock_db.commit = AsyncMock()
+
+        with (
+            patch(f"{MODULE}.BookingRepository") as MockBookingRepo,
+            patch(f"{MODULE}.ServiceRepository") as MockSvcRepo,
+            patch(f"{MODULE}.BusinessRepository") as MockBizRepo,
+            patch(f"{MODULE}.UserRepository") as MockUserRepo,
+            patch(f"{MODULE}.manager") as mock_manager,
+            patch(f"{MODULE}.notify_booking_confirmed"),
+        ):
+            MockBookingRepo.return_value.get_by_id = AsyncMock(return_value=mock_booking)
+            MockBookingRepo.return_value.get_with_details = AsyncMock(return_value=mock_booking)
+            MockBookingRepo.return_value.has_overlap = AsyncMock(return_value=False)
+            MockBookingRepo.return_value.count_confirmed_for_user_on_date = AsyncMock(return_value=0)
+            MockSvcRepo.return_value.get_by_id = AsyncMock(return_value=mock_service)
+            _mock_business_repo_clear(MockBizRepo)
+            MockUserRepo.return_value.get_by_id = AsyncMock(return_value=mock_user)
+            mock_manager.broadcast = AsyncMock()
+
+            await reschedule_booking(mock_db, mock_redis, mock_booking.id, admin_id, new_start, is_admin=True)
+
+        assert mock_booking.start_time == new_start

@@ -12,5 +12,8 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     port: 3000,
+    // inotify doesn't fire reliably across the Windows → Docker bind mount,
+    // so HMR misses edits. Polling is the standard fix for this setup.
+    watch: { usePolling: true, interval: 300 },
   },
 })

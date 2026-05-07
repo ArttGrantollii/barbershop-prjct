@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -12,6 +13,7 @@ from app.core.limiter import limiter
 from app.core.logging_config import configure_logging
 from app.db.redis import close_redis
 from app.db.session import engine
+from app.workers.reminders import start_reminder_loop
 
 
 @asynccontextmanager
@@ -20,9 +22,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await _bootstrap_admin()
     await _seed_business_hours()
     await _seed_services()
-    yield
-    await close_redis()
-    await engine.dispose()
+    reminder_task = start_reminder_loop()
+    try:
+        yield
+    finally:
+        # Cancel the reminder loop and wait for it to finish so we don't
+        # leave a half-completed iteration hanging during shutdown.
+        if reminder_task is not None:
+            reminder_task.cancel()
+            try:
+                await reminder_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        await close_redis()
+        await engine.dispose()
 
 
 async def _bootstrap_admin() -> None:

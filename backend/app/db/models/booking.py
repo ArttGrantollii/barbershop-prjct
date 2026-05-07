@@ -12,6 +12,7 @@ class BookingStatus(str, enum.Enum):
     CONFIRMED = "confirmed"
     CANCELLED = "cancelled"
     COMPLETED = "completed"
+    NO_SHOW = "no_show"
 
 
 class Booking(Base, TimestampMixin):
@@ -28,6 +29,11 @@ class Booking(Base, TimestampMixin):
     )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     cancellation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Set by the reminder worker after a 24h-before notification fires.
+    # Null means a reminder is still owed (or the worker hasn't reached it).
+    reminder_sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     user: Mapped["User"] = relationship("User", back_populates="bookings")
     service: Mapped["Service"] = relationship("Service", back_populates="bookings")

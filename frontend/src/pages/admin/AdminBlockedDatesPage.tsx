@@ -4,6 +4,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Trash2 } from "lucide-react"
 import { format, parseISO } from "date-fns"
 import { useToast } from "@/hooks/use-toast"
+import { useBusinessInfo } from "@/hooks/useBusinessInfo"
+import { salonDayKey } from "@/lib/datetime"
 import api from "@/lib/api"
 import type { BlockedDate } from "@/types"
 
@@ -15,7 +17,10 @@ export default function AdminBlockedDatesPage() {
   const [date, setDate] = useState("")
   const [reason, setReason] = useState("")
 
-  const today = new Date().toISOString().split("T")[0]
+  // Salon-local today, not browser-local — admins managing the salon from
+  // another timezone would otherwise see the wrong "earliest blockable" date.
+  const { data: business } = useBusinessInfo()
+  const today = salonDayKey(new Date(), business?.timezone)
 
   const { data: blocked = [], isLoading } = useQuery<BlockedDate[]>({
     queryKey: ["admin-blocked-dates"],

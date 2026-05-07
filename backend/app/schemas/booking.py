@@ -17,6 +17,10 @@ class BookingCancelRequest(BaseModel):
     reason: str | None = None
 
 
+class BookingRescheduleRequest(BaseModel):
+    start_time: datetime
+
+
 class ServiceSummary(BaseModel):
     model_config = {"from_attributes": True}
 

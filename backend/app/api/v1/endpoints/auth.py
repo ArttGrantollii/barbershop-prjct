@@ -27,7 +27,12 @@ from app.db.redis import get_redis
 from app.db.repositories.user_repository import UserRepository
 from app.db.session import get_db
 from app.schemas.auth import RefreshTokenRequest, TokenResponse
-from app.schemas.user import UserCreate, UserResponse
+from app.schemas.user import (
+    PasswordChangeRequest,
+    UserCreate,
+    UserResponse,
+    UserUpdate,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 logger = structlog.get_logger(__name__)
@@ -162,3 +167,46 @@ async def logout(
 @router.get("/me", response_model=UserResponse)
 async def me(current_user: User = Depends(get_current_active_user)) -> User:
     return current_user
+
+
+@router.patch("/me", response_model=UserResponse)
+@limiter.limit("10/minute")
+async def update_me(
+    request: Request,
+    body: UserUpdate,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    patch = body.model_dump(exclude_unset=True)
+    if not patch:
+        return current_user
+    repo = UserRepository(db)
+    updated = await repo.update(current_user, **patch)
+    logger.info("user_profile_updated", user_id=str(current_user.id), fields=list(patch.keys()))
+    return updated
+
+
+@router.post("/change-password", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("5/minute")
+async def change_password(
+    request: Request,
+    body: PasswordChangeRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    # Re-verify the current password before letting the user change it. Without
+    # this, a stolen access token could lock the legitimate owner out by
+    # rotating the password — the existing session itself isn't proof of intent.
+    if not verify_password(body.current_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Current password is incorrect",
+        )
+    if body.current_password == body.new_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must be different from current password",
+        )
+    current_user.hashed_password = get_password_hash(body.new_password)
+    await db.commit()
+    logger.info("user_password_changed", user_id=str(current_user.id))
