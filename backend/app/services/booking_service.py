@@ -15,13 +15,18 @@ from app.db.repositories.service_repository import ServiceRepository
 from app.db.repositories.user_repository import UserRepository
 from app.notifications.schemas import BookingInfo
 from app.notifications.service import notify_booking_cancelled, notify_booking_confirmed
-from app.services.availability_service import slot_hold_key
+from app.services.availability_service import slot_cooldown_key, slot_hold_key
 
 logger = structlog.get_logger(__name__)
 
 
 def _utc(dt: datetime) -> datetime:
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _cancel_count_key(user_id: UUID) -> str:
+    today = datetime.now(timezone.utc).date().isoformat()
+    return f"cancel_count:{user_id}:{today}"
 
 
 async def hold_slot(
@@ -39,6 +44,16 @@ async def hold_slot(
 
     end_time = start_time + timedelta(minutes=service.duration_minutes)
     key = slot_hold_key(service_id, start_time)
+
+    # Per-user cooldown: prevent immediately rebooking a slot the user just cancelled.
+    cooldown_key = slot_cooldown_key(user_id, service_id, start_time)
+    if await redis.exists(cooldown_key):
+        remaining = await redis.ttl(cooldown_key)
+        mins = max(1, remaining // 60)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"You recently cancelled this slot. Please wait {mins} minute{'s' if mins != 1 else ''} before rebooking it.",
+        )
 
     # Check DB first so we give a clear error if the slot is already confirmed.
     if await BookingRepository(db).has_overlap(start_time, end_time):
@@ -95,6 +110,30 @@ async def create_booking(
 ) -> Booking:
     start_time = _utc(start_time)
 
+    existing = await BookingRepository(db).count_confirmed_for_user_on_date(user_id, start_time.date())
+    if existing > 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="You already have a booking on this day. Please cancel it before making a new one.",
+        )
+
+    cooldown_key = slot_cooldown_key(user_id, service_id, start_time)
+    if await redis.exists(cooldown_key):
+        remaining = await redis.ttl(cooldown_key)
+        mins = max(1, remaining // 60)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"You recently cancelled this slot. Please wait {mins} minute{'s' if mins != 1 else ''} before rebooking it.",
+        )
+
+    cancel_key = _cancel_count_key(user_id)
+    cancel_count = await redis.get(cancel_key)
+    if cancel_count and int(cancel_count) >= settings.CANCELLATION_LIMIT_PER_DAY:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="You have reached today's booking limit. Try again tomorrow.",
+        )
+
     service = await ServiceRepository(db).get_by_id(service_id)
     if not service or not service.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found")
@@ -111,8 +150,9 @@ async def create_booking(
     if await BookingRepository(db).has_overlap(start_time, end_time):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Slot is no longer available")
 
+    repo = BookingRepository(db)
     try:
-        booking = await BookingRepository(db).create_booking(
+        raw = await repo.create_booking(
             user_id=user_id,
             service_id=service_id,
             start_time=start_time,
@@ -121,9 +161,11 @@ async def create_booking(
         )
     except IntegrityError:
         await db.rollback()
-        # The exclusion constraint fired — a concurrent booking slipped through
-        # between our overlap check and the INSERT.
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Slot is no longer available")
+
+    # Re-fetch with eagerly loaded relationships so FastAPI can serialize the response
+    # without hitting the MissingGreenlet error from lazy-loading inside the ASGI stack.
+    booking = await repo.get_with_details(raw.id)
 
     await redis.delete(key)
 
@@ -186,17 +228,44 @@ async def cancel_booking(
     if not is_admin:
         now = datetime.now(timezone.utc)
         window = timedelta(hours=settings.CANCELLATION_WINDOW_HOURS)
-        time_until = _utc(booking.start_time) - now
-        if time_until < window:
+        if _utc(booking.start_time) - now < window:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Cancellations require at least {settings.CANCELLATION_WINDOW_HOURS}h notice",
             )
 
+        cancel_key = _cancel_count_key(booking.user_id)
+        current_count = await redis.get(cancel_key)
+        if current_count and int(current_count) >= settings.CANCELLATION_LIMIT_PER_DAY:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Daily cancellation limit of {settings.CANCELLATION_LIMIT_PER_DAY} reached. Try again tomorrow.",
+            )
+
+    # Save scalar FKs before commit — the session expires all attributes on commit,
+    # and accessing them afterwards would trigger a lazy load (MissingGreenlet).
+    cancelled_user_id = booking.user_id
+    cancelled_service_id = booking.service_id
+    cancelled_start = _utc(booking.start_time)
+
     booking.status = BookingStatus.CANCELLED
     booking.cancellation_reason = reason
     await db.commit()
-    await db.refresh(booking)
+
+    if not is_admin:
+        # Increment the daily counter. INCR creates the key at 0 then returns 1 on
+        # first call, so we only set the TTL on that first write to avoid resetting it.
+        cancel_key = _cancel_count_key(cancelled_user_id)
+        count = await redis.incr(cancel_key)
+        if count == 1:
+            await redis.expire(cancel_key, 86_400)
+
+        # Block this user from rebooking the same slot during the cooldown window.
+        cooldown_key = slot_cooldown_key(cancelled_user_id, cancelled_service_id, cancelled_start)
+        await redis.set(cooldown_key, 1, ex=settings.SLOT_COOLDOWN_SECONDS)
+
+    # Re-fetch with eager relationships for response serialization and notifications.
+    booking = await repo.get_with_details(booking_id)
 
     logger.info(
         "booking_cancelled",
@@ -212,19 +281,17 @@ async def cancel_booking(
         "status": "available",
     })
 
-    user = await UserRepository(db).get_by_id(booking.user_id)
-    service = await ServiceRepository(db).get_by_id(booking.service_id)
-    if user and service:
+    if booking.user and booking.service:
         await notify_booking_cancelled(
             BookingInfo(
                 booking_id=str(booking.id),
-                customer_name=user.name,
-                customer_email=user.email,
-                customer_phone=user.phone,
-                service_name=service.name,
+                customer_name=booking.user.name,
+                customer_email=booking.user.email,
+                customer_phone=booking.user.phone,
+                service_name=booking.service.name,
                 start_time=_utc(booking.start_time),
                 end_time=_utc(booking.end_time),
-                duration_minutes=service.duration_minutes,
+                duration_minutes=booking.service.duration_minutes,
                 cancellation_reason=reason,
             )
         )

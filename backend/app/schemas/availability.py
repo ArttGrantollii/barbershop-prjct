@@ -9,6 +9,7 @@ class SlotStatus(str, Enum):
     AVAILABLE = "available"
     HELD = "held"
     BOOKED = "booked"
+    COOLDOWN = "cooldown"
 
 
 class TimeSlot(BaseModel):

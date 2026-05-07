@@ -5,7 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_current_customer
+from app.core.dependencies import get_current_customer, get_optional_user
 from app.db.models.user import User
 from app.db.redis import get_redis
 from app.db.repositories.service_repository import ServiceRepository
@@ -23,11 +23,12 @@ async def get_availability(
     service_id: UUID,
     db: AsyncSession = Depends(get_db),
     redis=Depends(get_redis),
+    current_user: User | None = Depends(get_optional_user),
 ) -> list:
     service = await ServiceRepository(db).get_by_id(service_id)
     if not service or not service.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found")
-    return await get_slots(db, redis, service, slot_date)
+    return await get_slots(db, redis, service, slot_date, user_id=current_user.id if current_user else None)
 
 
 @router.post("/hold", response_model=HoldResponse)

@@ -29,6 +29,7 @@ export default function MyBookingsPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["my-bookings"] })
+      queryClient.invalidateQueries({ queryKey: ["slots"] })
       toast({ title: "Booking cancelled" })
     },
     onError: (err: any) => {

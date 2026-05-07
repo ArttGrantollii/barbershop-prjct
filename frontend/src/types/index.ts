@@ -76,7 +76,7 @@ export interface BookingPage {
   offset: number
 }
 
-export type SlotStatus = "available" | "held" | "booked"
+export type SlotStatus = "available" | "held" | "booked" | "cooldown"
 
 export interface TimeSlot {
   start_time: string

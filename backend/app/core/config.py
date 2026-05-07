@@ -35,6 +35,8 @@ class Settings(BaseSettings):
 
     SLOT_HOLD_TTL_SECONDS: int = 600
     CANCELLATION_WINDOW_HOURS: int = 2
+    CANCELLATION_LIMIT_PER_DAY: int = 3
+    SLOT_COOLDOWN_SECONDS: int = 1800  # 30 minutes
 
     FIRST_ADMIN_EMAIL: str = ""
     FIRST_ADMIN_PASSWORD: str = ""

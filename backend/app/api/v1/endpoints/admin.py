@@ -160,5 +160,4 @@ async def admin_complete(
         )
     booking.status = BookingStatus.COMPLETED
     await db.commit()
-    await db.refresh(booking)
-    return booking
+    return await BookingRepository(db).get_with_details(booking_id)

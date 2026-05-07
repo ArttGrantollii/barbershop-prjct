@@ -9,12 +9,21 @@ from app.db.models.booking import Booking, BookingStatus
 from app.db.repositories.base import BaseRepository
 
 
+
 class BookingRepository(BaseRepository[Booking]):
     def __init__(self, db: AsyncSession) -> None:
         super().__init__(Booking, db)
 
     async def get_by_id(self, id: uuid.UUID) -> Booking | None:  # type: ignore[override]
         result = await self.db.execute(select(Booking).where(Booking.id == id))
+        return result.scalars().one_or_none()
+
+    async def get_with_details(self, id: uuid.UUID) -> Booking | None:
+        result = await self.db.execute(
+            select(Booking)
+            .where(Booking.id == id)
+            .options(selectinload(Booking.service), selectinload(Booking.user))
+        )
         return result.scalars().one_or_none()
 
     async def get_for_date(self, target_date: date) -> list[Booking]:
@@ -57,6 +66,27 @@ class BookingRepository(BaseRepository[Booking]):
             .order_by(Booking.start_time.desc())
         )
         return list(result.scalars().all())
+
+    async def count_confirmed_for_user_on_date(
+        self,
+        user_id: uuid.UUID,
+        target_date: date,
+    ) -> int:
+        day_start = datetime(target_date.year, target_date.month, target_date.day, tzinfo=timezone.utc)
+        day_end = day_start + timedelta(days=1)
+        result = await self.db.execute(
+            select(func.count())
+            .select_from(Booking)
+            .where(
+                and_(
+                    Booking.user_id == user_id,
+                    Booking.status == BookingStatus.CONFIRMED,
+                    Booking.start_time >= day_start,
+                    Booking.start_time < day_end,
+                )
+            )
+        )
+        return result.scalar_one()
 
     async def count_all(self, status: BookingStatus | None = None) -> int:
         q = select(func.count()).select_from(Booking)

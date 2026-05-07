@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
-import { useQuery, useMutation } from "@tanstack/react-query"
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { format, parseISO } from "date-fns"
 import { Check, ChevronRight, Clock, Scissors } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -36,6 +36,7 @@ function StepIndicator({ step, current }: { step: number; current: Step }) {
 
 export default function BookPage() {
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const { toast } = useToast()
 
   const [step, setStep] = useState<Step>(1)
@@ -68,6 +69,8 @@ export default function BookPage() {
       return data
     },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["my-bookings"] })
+      queryClient.invalidateQueries({ queryKey: ["slots"] })
       toast({ title: "Booking confirmed!", description: "Check your email for details." })
       navigate("/my-bookings")
     },
@@ -162,11 +165,19 @@ export default function BookPage() {
                         key={slot.start_time}
                         disabled={!isAvailable}
                         onClick={() => setSelectedSlot(slot)}
+                        title={
+                          slot.status === "held"     ? "Currently held by someone" :
+                          slot.status === "booked"   ? "Already booked" :
+                          slot.status === "cooldown" ? "You recently cancelled this slot — cooldown active" :
+                          undefined
+                        }
                         className={cn(
-                          "rounded-md border px-3 py-2 text-sm font-medium transition-colors",
-                          isAvailable && !isSelected && "hover:border-primary hover:bg-primary/5",
+                          "rounded-md border px-3 py-2 text-sm font-medium transition-colors text-foreground",
+                          isAvailable && !isSelected && "bg-background hover:border-primary hover:bg-primary/5",
                           isSelected && "bg-primary text-primary-foreground border-primary",
-                          !isAvailable && "opacity-40 cursor-not-allowed bg-secondary",
+                          slot.status === "held"     && "bg-muted/60 text-muted-foreground border-muted cursor-not-allowed line-through",
+                          slot.status === "booked"   && "bg-muted text-muted-foreground border-muted cursor-not-allowed opacity-50",
+                          slot.status === "cooldown" && "bg-destructive/10 text-destructive/50 border-destructive/20 cursor-not-allowed line-through",
                         )}
                       >
                         {format(parseISO(slot.start_time), "h:mm a")}

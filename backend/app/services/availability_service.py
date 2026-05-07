@@ -14,12 +14,19 @@ from app.db.repositories.business_repository import BusinessRepository
 logger = structlog.get_logger(__name__)
 
 HOLD_PREFIX = "slot_hold"
+COOLDOWN_PREFIX = "slot_cooldown"
 
 
 def slot_hold_key(service_id: UUID, start_time: datetime) -> str:
     if start_time.tzinfo is None:
         start_time = start_time.replace(tzinfo=timezone.utc)
     return f"{HOLD_PREFIX}:{service_id}:{start_time.isoformat()}"
+
+
+def slot_cooldown_key(user_id: UUID, service_id: UUID, start_time: datetime) -> str:
+    if start_time.tzinfo is None:
+        start_time = start_time.replace(tzinfo=timezone.utc)
+    return f"{COOLDOWN_PREFIX}:{user_id}:{service_id}:{start_time.isoformat()}"
 
 
 def _ensure_utc(dt: datetime) -> datetime:
@@ -31,6 +38,7 @@ async def get_slots(
     redis: Redis,
     service: Service,
     target_date: date,
+    user_id: UUID | None = None,
 ) -> list[dict]:
     business_repo = BusinessRepository(db)
 
@@ -81,12 +89,15 @@ async def get_slots(
             slots.append({"start_time": start, "end_time": end, "status": "held"})
             continue
 
-        is_booked = await booking_repo.has_overlap(start, end)
-        slots.append({
-            "start_time": start,
-            "end_time": end,
-            "status": "booked" if is_booked else "available",
-        })
+        if await booking_repo.has_overlap(start, end):
+            slots.append({"start_time": start, "end_time": end, "status": "booked"})
+            continue
+
+        if user_id and await redis.exists(slot_cooldown_key(user_id, service.id, start)):
+            slots.append({"start_time": start, "end_time": end, "status": "cooldown"})
+            continue
+
+        slots.append({"start_time": start, "end_time": end, "status": "available"})
 
     logger.debug(
         "slots_calculated",

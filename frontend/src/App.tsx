@@ -8,6 +8,7 @@ import LoginPage from "@/pages/LoginPage"
 import RegisterPage from "@/pages/RegisterPage"
 import BookPage from "@/pages/BookPage"
 import MyBookingsPage from "@/pages/MyBookingsPage"
+import AdminDashboardPage from "@/pages/admin/AdminDashboardPage"
 import AdminBookingsPage from "@/pages/admin/AdminBookingsPage"
 import AdminServicesPage from "@/pages/admin/AdminServicesPage"
 import AdminHoursPage from "@/pages/admin/AdminHoursPage"
@@ -35,7 +36,8 @@ export default function App() {
               path="/admin"
               element={<ProtectedRoute adminOnly><AdminLayout /></ProtectedRoute>}
             >
-              <Route index element={<Navigate to="/admin/bookings" replace />} />
+              <Route index element={<Navigate to="/admin/dashboard" replace />} />
+              <Route path="dashboard" element={<AdminDashboardPage />} />
               <Route path="bookings" element={<AdminBookingsPage />} />
               <Route path="services" element={<AdminServicesPage />} />
               <Route path="hours" element={<AdminHoursPage />} />

@@ -1,8 +1,10 @@
 import { Link } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
-import { Clock, Scissors, Star } from "lucide-react"
+import { Ban, CalendarDays, Clock, LayoutDashboard, Scissors, Settings, Star } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
+import { useAuth } from "@/context/AuthContext"
 import api from "@/lib/api"
 import type { Service } from "@/types"
 
@@ -16,9 +18,120 @@ function useServices() {
   })
 }
 
-export default function HomePage() {
-  const { data: services } = useServices()
+// ── Admin home ────────────────────────────────────────────────────────────────
 
+const adminQuickLinks = [
+  { to: "/admin/dashboard",     label: "Dashboard",      desc: "Stats and today's schedule", icon: LayoutDashboard },
+  { to: "/admin/bookings",      label: "Bookings",       desc: "Manage all appointments",    icon: CalendarDays },
+  { to: "/admin/services",      label: "Services",       desc: "Add or update offerings",    icon: Settings },
+  { to: "/admin/hours",         label: "Business Hours", desc: "Set your weekly schedule",   icon: Clock },
+  { to: "/admin/blocked-dates", label: "Blocked Dates",  desc: "Close days off",             icon: Ban },
+]
+
+function AdminHomePage({ services }: { services: Service[] | undefined }) {
+  const { user } = useAuth()
+
+  return (
+    <div className="flex flex-col">
+      {/* admin hero */}
+      <section className="border-b bg-secondary/20">
+        <div className="container py-14 flex flex-col gap-1">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-3">
+            Admin View
+          </p>
+          <h1 className="text-3xl font-bold tracking-tight">
+            Welcome back, {user?.name?.split(" ")[0]}
+          </h1>
+          <p className="text-muted-foreground mt-1 max-w-sm">
+            Manage your salon, bookings, and services from one place.
+          </p>
+          <div className="mt-6">
+            <Button asChild>
+              <Link to="/admin/dashboard">
+                <LayoutDashboard className="h-4 w-4 mr-2" />
+                Go to Dashboard
+              </Link>
+            </Button>
+          </div>
+        </div>
+      </section>
+
+      {/* quick links */}
+      <section className="container py-12">
+        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-5">
+          Quick Access
+        </h2>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {adminQuickLinks.map(({ to, label, desc, icon: Icon }) => (
+            <Link
+              key={to}
+              to={to}
+              className="group flex items-start gap-4 p-4 rounded-xl border bg-card hover:bg-accent transition-colors"
+            >
+              <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0 group-hover:bg-primary/20 transition-colors">
+                <Icon className="h-4.5 w-4.5 text-primary h-[18px] w-[18px]" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold leading-snug">{label}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">{desc}</p>
+              </div>
+            </Link>
+          ))}
+        </div>
+      </section>
+
+      {/* services preview */}
+      {services && services.filter((s) => s.is_active).length > 0 && (
+        <section className="border-t bg-secondary/20 py-12">
+          <div className="container">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h2 className="text-lg font-bold tracking-tight">Active Services</h2>
+                <p className="text-sm text-muted-foreground mt-0.5">What your customers see when booking</p>
+              </div>
+              <Button variant="outline" size="sm" asChild>
+                <Link to="/admin/services">Manage</Link>
+              </Button>
+            </div>
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {services.filter((s) => s.is_active).map((service) => (
+                <Card key={service.id}>
+                  <CardContent className="p-4 flex items-center gap-4">
+                    <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                      <Scissors className="h-4 w-4 text-primary" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{service.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {service.duration_minutes} min · ${Number(service.price).toFixed(2)}
+                      </p>
+                    </div>
+                    <Badge variant="secondary" className="text-[10px] shrink-0">Active</Badge>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* footer */}
+      <footer className="border-t py-8 mt-auto">
+        <div className="container flex flex-col md:flex-row justify-between gap-4 text-sm text-muted-foreground">
+          <div className="flex items-center gap-2 font-semibold text-foreground">
+            <Scissors className="h-4 w-4" />
+            Vendos Salon
+          </div>
+          <p className="text-xs">© {new Date().getFullYear()} Vendos Salon. All rights reserved.</p>
+        </div>
+      </footer>
+    </div>
+  )
+}
+
+// ── Customer home ─────────────────────────────────────────────────────────────
+
+function CustomerHomePage({ services }: { services: Service[] | undefined }) {
   return (
     <div className="flex flex-col">
       {/* hero */}
@@ -129,4 +242,14 @@ export default function HomePage() {
       </footer>
     </div>
   )
+}
+
+// ── Root ──────────────────────────────────────────────────────────────────────
+
+export default function HomePage() {
+  const { user } = useAuth()
+  const { data: services } = useServices()
+
+  if (user?.role === "admin") return <AdminHomePage services={services} />
+  return <CustomerHomePage services={services} />
 }
