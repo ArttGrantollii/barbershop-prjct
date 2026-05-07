@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.core.websocket_manager import manager
 from app.db.models.booking import Booking, BookingStatus
 from app.db.repositories.booking_repository import BookingRepository
+from app.db.repositories.business_repository import BusinessRepository
 from app.db.repositories.service_repository import ServiceRepository
 from app.db.repositories.user_repository import UserRepository
 from app.notifications.schemas import BookingInfo
@@ -109,6 +110,20 @@ async def create_booking(
     notes: str | None = None,
 ) -> Booking:
     start_time = _utc(start_time)
+
+    # Reject bookings in the past
+    if start_time <= datetime.now(timezone.utc):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Booking start time must be in the future.",
+        )
+
+    # Reject bookings on blocked dates
+    if await BusinessRepository(db).is_date_blocked(start_time.date()):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This date is not available for bookings.",
+        )
 
     existing = await BookingRepository(db).count_confirmed_for_user_on_date(user_id, start_time.date())
     if existing > 0:

@@ -11,7 +11,7 @@ from app.db.repositories.booking_repository import BookingRepository
 from app.db.repositories.business_repository import BusinessRepository
 from app.db.repositories.service_repository import ServiceRepository
 from app.db.session import get_db
-from app.schemas.booking import BookingDetailResponse, BookingPage
+from app.schemas.booking import BookingCancelRequest, BookingDetailResponse, BookingPage
 from app.schemas.business import (
     BlockedDateCreate,
     BlockedDateResponse,
@@ -57,6 +57,16 @@ async def update_service(
     if not service:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found")
     return await repo.update(service, **body.model_dump(exclude_none=True))
+
+
+@router.delete("/services/{service_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_service(
+    service_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    if not await ServiceRepository(db).delete(service_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found")
 
 
 # ── Business Hours ────────────────────────────────────────────────────────────
@@ -136,11 +146,12 @@ async def list_bookings(
 @router.post("/bookings/{booking_id}/cancel", response_model=BookingDetailResponse)
 async def admin_cancel(
     booking_id: uuid.UUID,
+    body: BookingCancelRequest = BookingCancelRequest(),
     db: AsyncSession = Depends(get_db),
     redis=Depends(get_redis),
     admin: User = Depends(get_current_admin),
 ):
-    return await cancel_booking(db, redis, booking_id, admin.id, is_admin=True)
+    return await cancel_booking(db, redis, booking_id, admin.id, reason=body.reason, is_admin=True)
 
 
 @router.post("/bookings/{booking_id}/complete", response_model=BookingDetailResponse)

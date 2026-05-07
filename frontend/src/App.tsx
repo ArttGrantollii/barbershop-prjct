@@ -1,8 +1,10 @@
-import { Navigate, Route, Routes } from "react-router-dom"
+import { Navigate, Route, Routes, useLocation } from "react-router-dom"
+import { AnimatePresence } from "framer-motion"
 import { AuthProvider } from "@/context/AuthContext"
 import { Navbar } from "@/components/layout/Navbar"
 import { ProtectedRoute } from "@/components/ProtectedRoute"
 import { AdminLayout } from "@/components/admin/AdminLayout"
+import { PageTransition } from "@/components/ui/PageTransition"
 import HomePage from "@/pages/HomePage"
 import LoginPage from "@/pages/LoginPage"
 import RegisterPage from "@/pages/RegisterPage"
@@ -14,37 +16,47 @@ import AdminServicesPage from "@/pages/admin/AdminServicesPage"
 import AdminHoursPage from "@/pages/admin/AdminHoursPage"
 import AdminBlockedDatesPage from "@/pages/admin/AdminBlockedDatesPage"
 
+function AnimatedRoutes() {
+  const location = useLocation()
+
+  return (
+    <AnimatePresence mode="wait">
+      <Routes location={location} key={location.pathname}>
+        <Route path="/" element={<PageTransition><HomePage /></PageTransition>} />
+        <Route path="/login" element={<PageTransition><LoginPage /></PageTransition>} />
+        <Route path="/register" element={<PageTransition><RegisterPage /></PageTransition>} />
+        <Route
+          path="/book"
+          element={<ProtectedRoute customerOnly><PageTransition><BookPage /></PageTransition></ProtectedRoute>}
+        />
+        <Route
+          path="/my-bookings"
+          element={<ProtectedRoute customerOnly><PageTransition><MyBookingsPage /></PageTransition></ProtectedRoute>}
+        />
+        <Route
+          path="/admin"
+          element={<ProtectedRoute adminOnly><AdminLayout /></ProtectedRoute>}
+        >
+          <Route index element={<Navigate to="/admin/dashboard" replace />} />
+          <Route path="dashboard" element={<PageTransition><AdminDashboardPage /></PageTransition>} />
+          <Route path="bookings" element={<PageTransition><AdminBookingsPage /></PageTransition>} />
+          <Route path="services" element={<PageTransition><AdminServicesPage /></PageTransition>} />
+          <Route path="hours" element={<PageTransition><AdminHoursPage /></PageTransition>} />
+          <Route path="blocked-dates" element={<PageTransition><AdminBlockedDatesPage /></PageTransition>} />
+        </Route>
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </AnimatePresence>
+  )
+}
+
 export default function App() {
   return (
     <AuthProvider>
       <div className="min-h-screen flex flex-col">
         <Navbar />
         <main className="flex-1">
-          <Routes>
-            <Route path="/" element={<HomePage />} />
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/register" element={<RegisterPage />} />
-            <Route
-              path="/book"
-              element={<ProtectedRoute customerOnly><BookPage /></ProtectedRoute>}
-            />
-            <Route
-              path="/my-bookings"
-              element={<ProtectedRoute customerOnly><MyBookingsPage /></ProtectedRoute>}
-            />
-            <Route
-              path="/admin"
-              element={<ProtectedRoute adminOnly><AdminLayout /></ProtectedRoute>}
-            >
-              <Route index element={<Navigate to="/admin/dashboard" replace />} />
-              <Route path="dashboard" element={<AdminDashboardPage />} />
-              <Route path="bookings" element={<AdminBookingsPage />} />
-              <Route path="services" element={<AdminServicesPage />} />
-              <Route path="hours" element={<AdminHoursPage />} />
-              <Route path="blocked-dates" element={<AdminBlockedDatesPage />} />
-            </Route>
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
+          <AnimatedRoutes />
         </main>
       </div>
     </AuthProvider>
