@@ -25,11 +25,11 @@ export default function App() {
             <Route path="/register" element={<RegisterPage />} />
             <Route
               path="/book"
-              element={<ProtectedRoute><BookPage /></ProtectedRoute>}
+              element={<ProtectedRoute customerOnly><BookPage /></ProtectedRoute>}
             />
             <Route
               path="/my-bookings"
-              element={<ProtectedRoute><MyBookingsPage /></ProtectedRoute>}
+              element={<ProtectedRoute customerOnly><MyBookingsPage /></ProtectedRoute>}
             />
             <Route
               path="/admin"

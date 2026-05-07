@@ -26,8 +26,10 @@ export function Navbar() {
         {/* desktop */}
         <nav className="hidden md:flex items-center gap-6 text-sm">
           <Link to="/" className="text-muted-foreground hover:text-foreground transition-colors">Home</Link>
-          <Link to="/book" className="text-muted-foreground hover:text-foreground transition-colors">Book</Link>
-          {user && (
+          {user?.role !== "admin" && (
+            <Link to="/book" className="text-muted-foreground hover:text-foreground transition-colors">Book</Link>
+          )}
+          {user && user.role !== "admin" && (
             <Link to="/my-bookings" className="text-muted-foreground hover:text-foreground transition-colors">My Bookings</Link>
           )}
           {user?.role === "admin" && (
@@ -59,9 +61,15 @@ export function Navbar() {
       <div className={cn("md:hidden border-t", open ? "block" : "hidden")}>
         <nav className="container flex flex-col gap-3 py-4 text-sm">
           <Link to="/" onClick={() => setOpen(false)} className="text-muted-foreground">Home</Link>
-          <Link to="/book" onClick={() => setOpen(false)} className="text-muted-foreground">Book</Link>
-          {user && <Link to="/my-bookings" onClick={() => setOpen(false)} className="text-muted-foreground">My Bookings</Link>}
-          {user?.role === "admin" && <Link to="/admin" onClick={() => setOpen(false)} className="text-muted-foreground">Admin</Link>}
+          {user?.role !== "admin" && (
+            <Link to="/book" onClick={() => setOpen(false)} className="text-muted-foreground">Book</Link>
+          )}
+          {user && user.role !== "admin" && (
+            <Link to="/my-bookings" onClick={() => setOpen(false)} className="text-muted-foreground">My Bookings</Link>
+          )}
+          {user?.role === "admin" && (
+            <Link to="/admin" onClick={() => setOpen(false)} className="text-muted-foreground">Admin</Link>
+          )}
           <div className="pt-2 border-t flex gap-2">
             {user ? (
               <Button variant="outline" size="sm" onClick={() => { handleLogout(); setOpen(false) }}>Sign out</Button>

@@ -5,7 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_current_active_user
+from app.core.dependencies import get_current_customer
 from app.db.models.user import User
 from app.db.redis import get_redis
 from app.db.repositories.service_repository import ServiceRepository
@@ -35,7 +35,7 @@ async def hold(
     body: HoldRequest,
     db: AsyncSession = Depends(get_db),
     redis=Depends(get_redis),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_customer),
 ) -> dict:
     return await hold_slot(db, redis, current_user.id, body.service_id, body.start_time)
 
@@ -44,6 +44,6 @@ async def hold(
 async def release(
     body: ReleaseRequest,
     redis=Depends(get_redis),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_customer),
 ) -> None:
     await release_hold(redis, current_user.id, body.service_id, body.start_time)

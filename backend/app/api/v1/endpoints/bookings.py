@@ -3,7 +3,7 @@ import uuid
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_current_active_user
+from app.core.dependencies import get_current_active_user, get_current_customer
 from app.db.models.user import User
 from app.db.redis import get_redis
 from app.db.repositories.booking_repository import BookingRepository
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/bookings", tags=["bookings"])
 
 @router.get("/my", response_model=list[BookingDetailResponse])
 async def my_bookings(
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_customer),
     db: AsyncSession = Depends(get_db),
 ) -> list:
     return await BookingRepository(db).get_by_user(current_user.id)
@@ -27,7 +27,7 @@ async def book(
     body: BookingCreate,
     db: AsyncSession = Depends(get_db),
     redis=Depends(get_redis),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_customer),
 ):
     return await create_booking(db, redis, current_user.id, body.service_id, body.start_time, body.notes)
 
@@ -38,6 +38,6 @@ async def cancel(
     body: BookingCancelRequest,
     db: AsyncSession = Depends(get_db),
     redis=Depends(get_redis),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_customer),
 ):
     return await cancel_booking(db, redis, booking_id, current_user.id, body.reason, is_admin=False)

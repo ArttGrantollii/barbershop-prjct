@@ -2,7 +2,13 @@ import type { ReactNode } from "react"
 import { Navigate, useLocation } from "react-router-dom"
 import { useAuth } from "@/context/AuthContext"
 
-export function ProtectedRoute({ children, adminOnly = false }: { children: ReactNode; adminOnly?: boolean }) {
+interface Props {
+  children: ReactNode
+  adminOnly?: boolean
+  customerOnly?: boolean
+}
+
+export function ProtectedRoute({ children, adminOnly = false, customerOnly = false }: Props) {
   const { user, isLoading } = useAuth()
   const location = useLocation()
 
@@ -16,6 +22,7 @@ export function ProtectedRoute({ children, adminOnly = false }: { children: Reac
 
   if (!user) return <Navigate to="/login" state={{ from: location.pathname }} replace />
   if (adminOnly && user.role !== "admin") return <Navigate to="/" replace />
+  if (customerOnly && user.role === "admin") return <Navigate to="/admin" replace />
 
   return <>{children}</>
 }
