@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { Button } from "@/components/ui/button"
 import { useToast } from "@/hooks/use-toast"
 import { cn } from "@/lib/utils"
 import api from "@/lib/api"
@@ -13,6 +12,8 @@ type DayState = { open_time: string; close_time: string; is_closed: boolean }
 function toInputTime(t: string) {
   return t.substring(0, 5)
 }
+
+const timeInputStyles = "bg-transparent border border-border text-foreground text-sm px-3 py-2 outline-none focus:border-foreground transition-colors [color-scheme:dark]"
 
 export default function AdminHoursPage() {
   const { toast } = useToast()
@@ -50,68 +51,75 @@ export default function AdminHoursPage() {
   const update = (day: number, k: keyof DayState, v: string | boolean) =>
     setRows((r) => ({ ...r, [day]: { ...r[day], [k]: v } }))
 
-  const save = (day: number) => {
-    const row = rows[day]
-    saveMutation.mutate({ day, body: row })
-  }
+  const save = (day: number) => saveMutation.mutate({ day, body: rows[day] })
 
   return (
     <div>
-      <h1 className="text-xl font-bold tracking-tight mb-6">Business Hours</h1>
+      <div className="mb-8">
+        <p className="text-[10px] tracking-[0.5em] uppercase text-muted-foreground mb-2">Admin</p>
+        <h1 className="font-display text-5xl uppercase">Business Hours</h1>
+      </div>
 
       {isLoading ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <div className="border border-border p-6 text-xs text-muted-foreground tracking-widest uppercase">Loading…</div>
       ) : (
-        <div className="flex flex-col gap-2">
-          {Array.from({ length: 7 }, (_, i) => i).map((day) => {
+        <div className="flex flex-col gap-0 border border-border">
+          {Array.from({ length: 7 }, (_, i) => i).map((day, idx) => {
             const row = rows[day]
             if (!row) return null
             return (
-              <div key={day} className={cn("flex items-center gap-4 p-4 rounded-xl border", row.is_closed && "opacity-60")}>
-                <span className="w-28 text-sm font-medium shrink-0">{DAY_NAMES[day]}</span>
+              <div
+                key={day}
+                className={cn(
+                  "flex flex-wrap items-center gap-4 px-6 py-5",
+                  idx < 6 && "border-b border-border",
+                  row.is_closed && "opacity-50"
+                )}
+              >
+                <span className="w-24 text-xs tracking-widest uppercase font-medium shrink-0">
+                  {DAY_NAMES[day]}
+                </span>
 
-                <label className="flex items-center gap-2 shrink-0 cursor-pointer select-none">
+                <label className="flex items-center gap-2.5 shrink-0 cursor-pointer select-none">
                   <input
                     type="checkbox"
                     checked={row.is_closed}
                     onChange={(e) => update(day, "is_closed", e.target.checked)}
-                    className="h-4 w-4 rounded"
+                    className="h-3.5 w-3.5 accent-foreground"
                   />
-                  <span className="text-sm text-muted-foreground">Closed</span>
+                  <span className="text-xs tracking-widest uppercase text-muted-foreground">Closed</span>
                 </label>
 
                 {!row.is_closed && (
-                  <>
+                  <div className="flex items-center gap-3 flex-wrap">
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-muted-foreground">Open</span>
+                      <span className="text-[10px] tracking-widest uppercase text-muted-foreground">Open</span>
                       <input
                         type="time"
                         value={row.open_time}
                         onChange={(e) => update(day, "open_time", e.target.value)}
-                        className="border border-input rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                        className={timeInputStyles}
                       />
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-muted-foreground">Close</span>
+                      <span className="text-[10px] tracking-widest uppercase text-muted-foreground">Close</span>
                       <input
                         type="time"
                         value={row.close_time}
                         onChange={(e) => update(day, "close_time", e.target.value)}
-                        className="border border-input rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                        className={timeInputStyles}
                       />
                     </div>
-                  </>
+                  </div>
                 )}
 
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="ml-auto"
+                <button
                   onClick={() => save(day)}
                   disabled={saveMutation.isPending}
+                  className="ml-auto text-xs tracking-widest uppercase border border-border px-5 py-2 hover:bg-secondary transition-colors disabled:opacity-50"
                 >
                   Save
-                </Button>
+                </button>
               </div>
             )
           })}

@@ -1,12 +1,9 @@
 import { useState } from "react"
 import type { ChangeEvent, FormEvent } from "react"
 import { Link, useNavigate } from "react-router-dom"
-import { Scissors } from "lucide-react"
 import { useAuth } from "@/context/AuthContext"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
+import { Logo } from "@/components/Logo"
 
 export default function RegisterPage() {
   const { register } = useAuth()
@@ -35,11 +32,8 @@ export default function RegisterPage() {
       } else {
         const detail = err.response.data?.detail
         let msg = "Registration failed. Please try again."
-        if (typeof detail === "string") {
-          msg = detail
-        } else if (Array.isArray(detail)) {
-          msg = detail.map((d: any) => d.msg ?? String(d)).join(", ")
-        }
+        if (typeof detail === "string") msg = detail
+        else if (Array.isArray(detail)) msg = detail.map((d: any) => d.msg ?? String(d)).join(", ")
         toast({ variant: "destructive", title: "Error", description: msg })
       }
     } finally {
@@ -47,47 +41,71 @@ export default function RegisterPage() {
     }
   }
 
+  const fields = [
+    { key: "name",     label: "Full Name",            type: "text",     auto: "name",         placeholder: "John Doe" },
+    { key: "email",    label: "Email Address",         type: "email",    auto: "email",        placeholder: "you@example.com" },
+    { key: "phone",    label: "Phone (optional)",      type: "tel",      auto: "tel",          placeholder: "+1 555 000 0000" },
+    { key: "password", label: "Password",              type: "password", auto: "new-password", placeholder: "••••••••" },
+    { key: "confirm",  label: "Confirm Password",      type: "password", auto: "new-password", placeholder: "••••••••" },
+  ] as const
+
   return (
-    <div className="min-h-[calc(100vh-3.5rem)] flex items-center justify-center p-4">
-      <div className="w-full max-w-sm">
-        <div className="flex flex-col items-center gap-2 mb-8">
-          <div className="h-10 w-10 rounded-full bg-secondary flex items-center justify-center">
-            <Scissors className="h-5 w-5" />
-          </div>
-          <h1 className="text-2xl font-bold tracking-tight">Create an account</h1>
-          <p className="text-sm text-muted-foreground">Book appointments and manage your visits</p>
+    <div className="min-h-[calc(100vh-4rem)] flex">
+      {/* left panel */}
+      <div className="hidden lg:flex flex-col justify-between p-12 border-r border-border w-[420px] shrink-0">
+        <Logo className="h-8 w-auto self-start" />
+        <div>
+          <h2 className="font-display text-7xl uppercase leading-none mb-4">Join<br />Us.</h2>
+          <p className="text-xs tracking-widest uppercase text-muted-foreground">Book. Arrive. Look sharp.</p>
         </div>
+        <p className="text-[10px] tracking-widest uppercase text-muted-foreground">© {new Date().getFullYear()} VENDOS SALON</p>
+      </div>
 
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="name">Full name</Label>
-            <Input id="name" value={form.name} onChange={set("name")} required autoComplete="name" />
+      {/* right panel */}
+      <div className="flex-1 flex items-center justify-center p-8 py-16">
+        <div className="w-full max-w-sm">
+          <div className="mb-10">
+            <p className="text-[10px] tracking-[0.5em] uppercase text-muted-foreground mb-3">New Account</p>
+            <h1 className="font-display text-5xl uppercase">Register</h1>
           </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="email">Email</Label>
-            <Input id="email" type="email" value={form.email} onChange={set("email")} required autoComplete="email" />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="phone">Phone <span className="text-muted-foreground">(optional)</span></Label>
-            <Input id="phone" type="tel" value={form.phone} onChange={set("phone")} autoComplete="tel" />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="password">Password</Label>
-            <Input id="password" type="password" value={form.password} onChange={set("password")} required autoComplete="new-password" />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="confirm">Confirm password</Label>
-            <Input id="confirm" type="password" value={form.confirm} onChange={set("confirm")} required autoComplete="new-password" />
-          </div>
-          <Button type="submit" className="mt-2" disabled={loading}>
-            {loading ? "Creating account…" : "Create account"}
-          </Button>
-        </form>
 
-        <p className="text-center text-sm text-muted-foreground mt-6">
-          Already have an account?{" "}
-          <Link to="/login" className="text-foreground underline underline-offset-4">Sign in</Link>
-        </p>
+          <form onSubmit={handleSubmit} className="flex flex-col gap-0 border border-border">
+            {fields.map(({ key, label, type, auto, placeholder }, i) => (
+              <div
+                key={key}
+                className={`flex flex-col gap-1 p-5 ${i < fields.length - 1 ? "border-b border-border" : ""}`}
+              >
+                <label htmlFor={key} className="text-[10px] tracking-widest uppercase text-muted-foreground">
+                  {label}
+                </label>
+                <input
+                  id={key}
+                  type={type}
+                  autoComplete={auto}
+                  value={form[key]}
+                  onChange={set(key)}
+                  required={key !== "phone"}
+                  placeholder={placeholder}
+                  className="bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/50 py-1"
+                />
+              </div>
+            ))}
+            <button
+              type="submit"
+              disabled={loading}
+              className="p-5 text-xs tracking-widest uppercase bg-foreground text-background hover:bg-foreground/90 transition-colors disabled:opacity-50"
+            >
+              {loading ? "Creating account…" : "Create Account"}
+            </button>
+          </form>
+
+          <p className="text-xs tracking-wider text-muted-foreground mt-6 text-center">
+            Already have an account?{" "}
+            <Link to="/login" className="text-foreground hover:underline underline-offset-4">
+              Sign in
+            </Link>
+          </p>
+        </div>
       </div>
     </div>
   )

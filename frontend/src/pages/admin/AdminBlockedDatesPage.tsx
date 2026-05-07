@@ -3,13 +3,11 @@ import type { FormEvent } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Trash2 } from "lucide-react"
 import { format, parseISO } from "date-fns"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Card, CardContent } from "@/components/ui/card"
 import { useToast } from "@/hooks/use-toast"
 import api from "@/lib/api"
 import type { BlockedDate } from "@/types"
+
+const inputStyles = "bg-transparent border border-border text-foreground text-sm px-3 py-2.5 outline-none focus:border-foreground transition-colors placeholder:text-muted-foreground/40 w-full [color-scheme:dark]"
 
 export default function AdminBlockedDatesPage() {
   const { toast } = useToast()
@@ -51,63 +49,77 @@ export default function AdminBlockedDatesPage() {
 
   return (
     <div>
-      <h1 className="text-xl font-bold tracking-tight mb-6">Blocked Dates</h1>
+      <div className="mb-8">
+        <p className="text-[10px] tracking-[0.5em] uppercase text-muted-foreground mb-2">Admin</p>
+        <h1 className="font-display text-5xl uppercase">Blocked Dates</h1>
+      </div>
 
       {/* add form */}
-      <Card className="mb-6">
-        <CardContent className="p-5">
-          <p className="font-medium text-sm mb-3">Block a Date</p>
-          <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row gap-3">
-            <div className="flex flex-col gap-1.5 flex-1">
-              <Label htmlFor="block-date">Date</Label>
-              <Input
+      <div className="border border-border mb-8">
+        <div className="px-6 py-4 border-b border-border">
+          <p className="text-xs tracking-widest uppercase text-muted-foreground">Block a Date</p>
+        </div>
+        <form onSubmit={handleSubmit}>
+          <div className="flex flex-col sm:flex-row gap-px bg-border">
+            <div className="bg-background flex flex-col gap-1 p-5 flex-1">
+              <label htmlFor="block-date" className="text-[10px] tracking-widest uppercase text-muted-foreground">Date</label>
+              <input
                 id="block-date"
                 type="date"
                 min={today}
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
                 required
-                className="max-w-xs"
+                className={inputStyles}
               />
             </div>
-            <div className="flex flex-col gap-1.5 flex-1">
-              <Label htmlFor="block-reason">Reason <span className="text-muted-foreground">(optional)</span></Label>
-              <Input
+            <div className="bg-background flex flex-col gap-1 p-5 flex-1">
+              <label htmlFor="block-reason" className="text-[10px] tracking-widest uppercase text-muted-foreground">Reason (optional)</label>
+              <input
                 id="block-reason"
+                type="text"
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
                 placeholder="e.g. Public holiday"
+                className={inputStyles}
               />
             </div>
-            <div className="flex items-end">
-              <Button type="submit" disabled={addMutation.isPending}>
-                {addMutation.isPending ? "Saving…" : "Block Date"}
-              </Button>
-            </div>
-          </form>
-        </CardContent>
-      </Card>
+          </div>
+          <div className="border-t border-border">
+            <button
+              type="submit"
+              disabled={addMutation.isPending}
+              className="w-full px-6 py-4 text-xs tracking-widest uppercase bg-foreground text-background hover:bg-foreground/90 transition-colors disabled:opacity-50"
+            >
+              {addMutation.isPending ? "Saving…" : "Block Date"}
+            </button>
+          </div>
+        </form>
+      </div>
 
       {isLoading ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <div className="border border-border p-6 text-xs text-muted-foreground tracking-widest uppercase">Loading…</div>
       ) : blocked.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No blocked dates.</p>
+        <div className="border border-border p-12 text-center text-xs text-muted-foreground tracking-widest uppercase">No blocked dates.</div>
       ) : (
-        <div className="flex flex-col gap-2">
-          {blocked.map((bd) => (
-            <div key={bd.id} className="flex items-center justify-between px-4 py-3 rounded-xl border">
+        <div className="flex flex-col gap-0 border border-border">
+          {blocked.map((bd, i) => (
+            <div
+              key={bd.id}
+              className={`flex items-center justify-between px-6 py-5 ${i < blocked.length - 1 ? "border-b border-border" : ""}`}
+            >
               <div>
-                <p className="text-sm font-medium">{format(parseISO(bd.date), "EEEE, MMMM d, yyyy")}</p>
-                {bd.reason && <p className="text-xs text-muted-foreground mt-0.5">{bd.reason}</p>}
+                <p className="text-sm font-medium uppercase tracking-wide">{format(parseISO(bd.date), "EEEE, MMMM d, yyyy")}</p>
+                {bd.reason && <p className="text-xs text-muted-foreground tracking-wider mt-1">{bd.reason}</p>}
               </div>
-              <Button
-                size="sm"
-                variant="outline"
+              <button
                 onClick={() => deleteMutation.mutate(bd.id)}
                 disabled={deleteMutation.isPending}
+                className="p-2.5 border border-border hover:bg-secondary transition-colors disabled:opacity-50"
+                aria-label="Remove"
               >
                 <Trash2 className="h-3.5 w-3.5" />
-              </Button>
+              </button>
             </div>
           ))}
         </div>

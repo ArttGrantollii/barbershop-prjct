@@ -1,17 +1,23 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { format, parseISO, isPast } from "date-fns"
-import { Calendar, Clock, Scissors } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
+import { Link } from "react-router-dom"
+import { Calendar, Clock } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { cn } from "@/lib/utils"
 import api from "@/lib/api"
 import type { Booking } from "@/types"
 
-function statusVariant(status: Booking["status"]) {
-  if (status === "confirmed") return "success"
-  if (status === "cancelled") return "destructive"
-  return "secondary"
+function StatusPill({ status }: { status: Booking["status"] }) {
+  return (
+    <span className={cn(
+      "text-[10px] tracking-widest uppercase px-2.5 py-1 border",
+      status === "confirmed"  && "border-foreground/30 text-foreground",
+      status === "cancelled"  && "border-destructive/30 text-destructive/70",
+      status === "completed"  && "border-muted-foreground/30 text-muted-foreground",
+    )}>
+      {status}
+    </span>
+  )
 }
 
 export default function MyBookingsPage() {
@@ -38,82 +44,100 @@ export default function MyBookingsPage() {
     },
   })
 
-  if (isLoading) {
-    return (
-      <div className="container py-10 max-w-2xl">
-        <p className="text-muted-foreground text-sm">Loading your bookings…</p>
-      </div>
-    )
-  }
-
   return (
-    <div className="container py-10 max-w-2xl">
-      <h1 className="text-2xl font-bold tracking-tight mb-2">My Bookings</h1>
-      <p className="text-muted-foreground mb-8">Your upcoming and past appointments.</p>
+    <div className="container py-16 max-w-3xl">
+      <div className="mb-12">
+        <p className="text-[10px] tracking-[0.5em] uppercase text-muted-foreground mb-3">Your Appointments</p>
+        <h1 className="font-display text-6xl uppercase">My Bookings</h1>
+      </div>
 
-      {!bookings?.length ? (
-        <div className="flex flex-col items-center gap-4 py-16 text-center">
-          <div className="h-12 w-12 rounded-full bg-secondary flex items-center justify-center">
-            <Scissors className="h-6 w-6 text-muted-foreground" />
+      {isLoading ? (
+        <div className="border border-border p-8 text-xs text-muted-foreground tracking-widest uppercase">
+          Loading bookings…
+        </div>
+      ) : !bookings?.length ? (
+        <div className="border border-border">
+          <div className="p-16 flex flex-col items-center text-center gap-6">
+            <div className="w-12 h-px bg-border" />
+            <div>
+              <p className="text-sm font-medium uppercase tracking-widest mb-2">No bookings yet</p>
+              <p className="text-xs text-muted-foreground tracking-wider">Book your first appointment to get started.</p>
+            </div>
+            <Link
+              to="/book"
+              className="text-xs tracking-widest uppercase bg-foreground text-background px-8 py-3 hover:bg-foreground/90 transition-colors"
+            >
+              Book Now
+            </Link>
           </div>
-          <div>
-            <p className="font-medium">No bookings yet</p>
-            <p className="text-sm text-muted-foreground mt-1">Book your first appointment to get started.</p>
-          </div>
-          <Button asChild>
-            <a href="/book">Book Now</a>
-          </Button>
         </div>
       ) : (
-        <div className="flex flex-col gap-3">
-          {bookings.map((booking) => {
+        <div className="flex flex-col gap-0 border border-border">
+          {bookings.map((booking, i) => {
             const startTime = parseISO(booking.start_time)
             const canCancel = booking.status === "confirmed" && !isPast(startTime)
             return (
-              <Card key={booking.id}>
-                <CardContent className="p-5 flex flex-col sm:flex-row sm:items-center gap-4">
-                  <div className="flex-1 flex flex-col gap-1.5">
-                    <div className="flex items-center gap-2">
-                      <p className="font-medium">{booking.service?.name ?? "Appointment"}</p>
-                      <Badge variant={statusVariant(booking.status)}>
-                        {booking.status.charAt(0).toUpperCase() + booking.status.slice(1)}
-                      </Badge>
-                    </div>
-                    <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
-                      <span className="flex items-center gap-1">
-                        <Calendar className="h-3.5 w-3.5" />
-                        {format(startTime, "EEEE, MMM d, yyyy")}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Clock className="h-3.5 w-3.5" />
-                        {format(startTime, "h:mm a")}
-                      </span>
-                    </div>
-                    {booking.service && (
-                      <p className="text-sm text-muted-foreground">
-                        {booking.service.duration_minutes} min · ${Number(booking.service.price).toFixed(2)}
-                      </p>
-                    )}
-                    {booking.cancellation_reason && (
-                      <p className="text-xs text-muted-foreground italic">Reason: {booking.cancellation_reason}</p>
-                    )}
+              <div
+                key={booking.id}
+                className={cn(
+                  "p-6 flex flex-col sm:flex-row sm:items-center gap-5",
+                  i < bookings.length - 1 && "border-b border-border",
+                  booking.status !== "confirmed" && "opacity-60"
+                )}
+              >
+                <div className="flex-1 flex flex-col gap-2 min-w-0">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <p className="text-sm font-medium uppercase tracking-widest">
+                      {booking.service?.name ?? "Appointment"}
+                    </p>
+                    <StatusPill status={booking.status} />
                   </div>
-                  {canCancel && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => cancelMutation.mutate(booking.id)}
-                      disabled={cancelMutation.isPending}
-                    >
-                      Cancel
-                    </Button>
+
+                  <div className="flex flex-wrap gap-4 text-xs text-muted-foreground tracking-wider">
+                    <span className="flex items-center gap-1.5">
+                      <Calendar className="h-3 w-3" />
+                      {format(startTime, "EEEE, MMM d, yyyy")}
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <Clock className="h-3 w-3" />
+                      {format(startTime, "h:mm a")}
+                    </span>
+                  </div>
+
+                  {booking.service && (
+                    <p className="text-xs text-muted-foreground tracking-wider">
+                      {booking.service.duration_minutes} min · ${Number(booking.service.price).toFixed(2)}
+                    </p>
                   )}
-                </CardContent>
-              </Card>
+
+                  {booking.cancellation_reason && (
+                    <p className="text-xs text-muted-foreground italic">{booking.cancellation_reason}</p>
+                  )}
+                </div>
+
+                {canCancel && (
+                  <button
+                    onClick={() => cancelMutation.mutate(booking.id)}
+                    disabled={cancelMutation.isPending}
+                    className="shrink-0 text-xs tracking-widest uppercase border border-border px-5 py-2.5 hover:bg-secondary transition-colors disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                )}
+              </div>
             )
           })}
         </div>
       )}
+
+      <div className="mt-10 flex justify-center">
+        <Link
+          to="/book"
+          className="text-xs tracking-widest uppercase text-muted-foreground hover:text-foreground transition-colors"
+        >
+          + Book Another Appointment
+        </Link>
+      </div>
     </div>
   )
 }

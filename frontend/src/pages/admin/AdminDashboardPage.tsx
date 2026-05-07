@@ -1,46 +1,20 @@
 import { useMemo } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { addDays, format, isToday, isWithinInterval, parseISO, startOfDay } from "date-fns"
-import {
-  CalendarDays,
-  CheckCircle2,
-  Clock,
-  DollarSign,
-  XCircle,
-} from "lucide-react"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
+import { CalendarDays } from "lucide-react"
 import { useAuth } from "@/context/AuthContext"
 import api from "@/lib/api"
 import type { BookingPage } from "@/types"
 
-// ── Stat card ────────────────────────────────────────────────────────────────
-
-interface StatCardProps {
-  title: string
-  value: string | number
-  sub: string
-  icon: React.ElementType
-}
-
-function StatCard({ title, value, sub, icon: Icon }: StatCardProps) {
+function StatCard({ label, value, sub }: { label: string; value: string | number; sub: string }) {
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between pb-2 pt-4 px-5">
-        <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-          {title}
-        </CardTitle>
-        <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
-      </CardHeader>
-      <CardContent className="px-5 pb-5 pt-0">
-        <p className="text-2xl font-bold leading-none">{value}</p>
-        <p className="text-xs text-muted-foreground mt-1.5">{sub}</p>
-      </CardContent>
-    </Card>
+    <div className="bg-background border border-border p-6 flex flex-col gap-3">
+      <p className="text-[10px] tracking-[0.5em] uppercase text-muted-foreground">{label}</p>
+      <p className="font-display text-5xl uppercase leading-none">{value}</p>
+      <p className="text-xs text-muted-foreground tracking-wider">{sub}</p>
+    </div>
   )
 }
-
-// ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function AdminDashboardPage() {
   const { user } = useAuth()
@@ -48,12 +22,11 @@ export default function AdminDashboardPage() {
 
   const greeting = useMemo(() => {
     const h = now.getHours()
-    if (h < 12) return "Good morning"
-    if (h < 17) return "Good afternoon"
-    return "Good evening"
+    if (h < 12) return "Morning"
+    if (h < 17) return "Afternoon"
+    return "Evening"
   }, [])
 
-  // Recent confirmed bookings — sorted start_time DESC so today/future are first
   const { data: confirmedPage, isLoading: loadingConfirmed } = useQuery<BookingPage>({
     queryKey: ["dashboard", "confirmed"],
     queryFn: () =>
@@ -61,7 +34,6 @@ export default function AdminDashboardPage() {
     staleTime: 30_000,
   })
 
-  // Only need the total count for cancelled
   const { data: cancelledPage } = useQuery<BookingPage>({
     queryKey: ["dashboard", "cancelled"],
     queryFn: () =>
@@ -91,109 +63,102 @@ export default function AdminDashboardPage() {
   )
 
   return (
-    <div className="space-y-8">
-      {/* Header */}
+    <div className="flex flex-col gap-10">
+      {/* header */}
       <div>
-        <h1 className="text-xl font-bold tracking-tight">
-          {greeting}, {user?.name?.split(" ")[0]}
-        </h1>
-        <p className="text-sm text-muted-foreground mt-0.5">
+        <p className="text-[10px] tracking-[0.5em] uppercase text-muted-foreground mb-2">
           {format(now, "EEEE, MMMM d, yyyy")}
         </p>
+        <h1 className="font-display text-6xl uppercase leading-none">
+          {greeting},<br />{user?.name?.split(" ")[0]}.
+        </h1>
       </div>
 
-      {/* Stat cards */}
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+      {/* stats */}
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-px bg-border">
         <StatCard
-          title="Today"
+          label="Today"
           value={loadingConfirmed ? "—" : todayBookings.length}
           sub={`$${todayRevenue.toFixed(2)} in revenue`}
-          icon={CalendarDays}
         />
         <StatCard
-          title="This Week"
+          label="This Week"
           value={loadingConfirmed ? "—" : thisWeekCount}
           sub="upcoming appointments"
-          icon={Clock}
         />
         <StatCard
-          title="Confirmed"
+          label="Confirmed"
           value={confirmedPage?.total ?? "—"}
           sub="all-time bookings"
-          icon={CheckCircle2}
         />
         <StatCard
-          title="Cancelled"
+          label="Cancelled"
           value={cancelledPage?.total ?? "—"}
           sub="all-time cancellations"
-          icon={XCircle}
         />
       </div>
 
-      {/* Today's schedule */}
+      {/* today's schedule */}
       <div>
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold">Today's Schedule</h2>
-          <span className="text-xs text-muted-foreground">
+        <div className="flex items-center justify-between mb-6">
+          <p className="text-xs tracking-widest uppercase text-muted-foreground">Today's Schedule</p>
+          <p className="text-xs text-muted-foreground">
             {todayBookings.length} appointment{todayBookings.length !== 1 ? "s" : ""}
-          </span>
+          </p>
         </div>
 
         {loadingConfirmed ? (
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-px bg-border">
             {[1, 2, 3].map((i) => (
-              <div key={i} className="h-16 rounded-xl border bg-muted/30 animate-pulse" />
+              <div key={i} className="h-16 bg-secondary animate-pulse" />
             ))}
           </div>
         ) : todayBookings.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-14 rounded-xl border border-dashed text-center">
-            <CalendarDays className="h-8 w-8 text-muted-foreground/50 mb-3" />
-            <p className="text-sm font-medium">No appointments today</p>
-            <p className="text-xs text-muted-foreground mt-1">Enjoy the day off!</p>
+          <div className="border border-border p-16 flex flex-col items-center text-center gap-4">
+            <CalendarDays className="h-8 w-8 text-muted-foreground/30" />
+            <div>
+              <p className="text-sm font-medium uppercase tracking-widest mb-1">No appointments today</p>
+              <p className="text-xs text-muted-foreground tracking-wider">Enjoy the day off.</p>
+            </div>
           </div>
         ) : (
-          <div className="flex flex-col gap-2">
-            {todayBookings.map((booking, idx) => {
+          <div className="flex flex-col gap-0 border border-border">
+            {todayBookings.map((booking, i) => {
               const start = parseISO(booking.start_time)
               const end   = parseISO(booking.end_time)
-              const isPast = end < now
+              const past  = end < now
               return (
                 <div
                   key={booking.id}
-                  className={`flex items-center gap-4 px-4 py-3.5 rounded-xl border transition-opacity ${isPast ? "opacity-50" : ""}`}
+                  className={`flex items-center gap-6 px-6 py-5 ${i < todayBookings.length - 1 ? "border-b border-border" : ""} ${past ? "opacity-40" : ""}`}
                 >
-                  {/* time + index */}
-                  <div className="shrink-0 w-10 text-center">
-                    <p className="text-xs font-medium text-muted-foreground">{format(start, "h:mm")}</p>
-                    <p className="text-[10px] text-muted-foreground">{format(start, "a")}</p>
+                  <div className="shrink-0 w-14 text-right">
+                    <p className="text-sm font-medium tabular-nums">{format(start, "h:mm")}</p>
+                    <p className="text-[10px] tracking-widest uppercase text-muted-foreground">{format(start, "a")}</p>
                   </div>
 
-                  {/* accent line */}
-                  <div className="h-10 w-0.5 rounded-full bg-primary/40 shrink-0" />
+                  <div className="w-px h-8 bg-border shrink-0" />
 
-                  {/* details */}
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium leading-snug truncate">
+                    <p className="text-sm font-medium uppercase tracking-wide truncate">
                       {booking.user?.name ?? "Unknown"}
                     </p>
-                    <p className="text-xs text-muted-foreground truncate">
+                    <p className="text-xs text-muted-foreground tracking-wider truncate">
                       {booking.service?.name ?? "—"}
                       {booking.service && ` · ${booking.service.duration_minutes} min`}
                     </p>
                   </div>
 
-                  {/* end time — hidden on mobile */}
-                  <p className="text-xs text-muted-foreground shrink-0 hidden sm:block">
+                  <p className="text-xs text-muted-foreground shrink-0 hidden sm:block tracking-wider">
                     until {format(end, "h:mm a")}
                   </p>
 
-                  {/* price */}
                   <div className="shrink-0 text-right">
-                    <p className="text-sm font-semibold">
+                    <p className="text-sm font-semibold tracking-wide">
                       ${Number(booking.service?.price ?? 0).toFixed(2)}
                     </p>
-                    {isPast && (
-                      <Badge variant="secondary" className="text-[10px] mt-0.5">Done</Badge>
+                    {past && (
+                      <p className="text-[10px] tracking-widest uppercase text-muted-foreground mt-0.5">Done</p>
                     )}
                   </div>
                 </div>
