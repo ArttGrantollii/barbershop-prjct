@@ -1,5 +1,6 @@
 import uuid
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, func, or_, select
@@ -8,6 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.db.models.booking import Booking, BookingStatus
+from app.db.models.service import Service
 from app.db.models.user import User
 from app.db.repositories.base import BaseRepository
 
@@ -165,6 +167,65 @@ class BookingRepository(BaseRepository[Booking]):
             stmt = stmt.where(*clauses)
         result = await self.db.execute(stmt)
         return result.scalar_one()
+
+    async def count_between(
+        self,
+        start_time: datetime,
+        end_time: datetime,
+        status: BookingStatus | None = None,
+    ) -> int:
+        clauses = [
+            Booking.start_time >= start_time,
+            Booking.start_time < end_time,
+        ]
+        if status is not None:
+            clauses.append(Booking.status == status)
+        result = await self.db.execute(
+            select(func.count()).select_from(Booking).where(and_(*clauses))
+        )
+        return result.scalar_one()
+
+    async def revenue_between(
+        self,
+        start_time: datetime,
+        end_time: datetime,
+        status: BookingStatus = BookingStatus.CONFIRMED,
+    ) -> Decimal:
+        result = await self.db.execute(
+            select(func.coalesce(func.sum(Service.price), 0))
+            .select_from(Booking)
+            .join(Service, Service.id == Booking.service_id)
+            .where(
+                Booking.status == status,
+                Booking.start_time >= start_time,
+                Booking.start_time < end_time,
+            )
+        )
+        return result.scalar_one()
+
+    async def get_between_with_details(
+        self,
+        start_time: datetime,
+        end_time: datetime,
+        status: BookingStatus | None = None,
+    ) -> list[Booking]:
+        clauses = [
+            Booking.start_time >= start_time,
+            Booking.start_time < end_time,
+        ]
+        if status is not None:
+            clauses.append(Booking.status == status)
+        result = await self.db.execute(
+            select(Booking)
+            .where(and_(*clauses))
+            .options(
+                selectinload(Booking.user),
+                selectinload(Booking.service),
+                selectinload(Booking.staff),
+            )
+            .order_by(Booking.start_time.asc())
+        )
+        return list(result.scalars().all())
 
     async def count_for_service(self, service_id: uuid.UUID) -> int:
         result = await self.db.execute(

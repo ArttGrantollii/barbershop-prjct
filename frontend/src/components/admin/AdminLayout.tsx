@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from "react-router-dom"
-import { Ban, CalendarDays, Clock, LayoutDashboard, Settings } from "lucide-react"
+import { Ban, CalendarDays, Clock, LayoutDashboard, Settings, Users } from "lucide-react"
 import { useAuth } from "@/context/AuthContext"
 import { cn } from "@/lib/utils"
 import { Logo } from "@/components/Logo"
@@ -8,6 +8,7 @@ const navItems = [
   { to: "/admin/dashboard",     label: "Dashboard",      icon: LayoutDashboard },
   { to: "/admin/bookings",      label: "Bookings",       icon: CalendarDays },
   { to: "/admin/services",      label: "Services",       icon: Settings },
+  { to: "/admin/staff",         label: "Staff",          icon: Users },
   { to: "/admin/hours",         label: "Hours",          icon: Clock },
   { to: "/admin/blocked-dates", label: "Blocked Dates",  icon: Ban },
 ]

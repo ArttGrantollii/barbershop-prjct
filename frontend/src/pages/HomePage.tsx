@@ -1,7 +1,8 @@
 import { Link } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
 import { motion } from "framer-motion"
-import { Ban, CalendarDays, Clock, LayoutDashboard, Settings } from "lucide-react"
+import type { Variants } from "framer-motion"
+import { Ban, CalendarDays, Clock, LayoutDashboard, Settings, Users } from "lucide-react"
 import { useAuth } from "@/context/AuthContext"
 import { Logo } from "@/components/Logo"
 import { FadeIn, StaggerIn, StaggerChild } from "@/components/ui/FadeIn"
@@ -21,6 +22,7 @@ const adminQuickLinks = [
   { to: "/admin/dashboard",     label: "Dashboard",      desc: "Stats and today's schedule", icon: LayoutDashboard },
   { to: "/admin/bookings",      label: "Bookings",       desc: "Manage all appointments",    icon: CalendarDays },
   { to: "/admin/services",      label: "Services",       desc: "Add or update offerings",    icon: Settings },
+  { to: "/admin/staff",         label: "Staff",          desc: "Manage stylists and skills", icon: Users },
   { to: "/admin/hours",         label: "Business Hours", desc: "Set your weekly schedule",   icon: Clock },
   { to: "/admin/blocked-dates", label: "Blocked Dates",  desc: "Close days off",             icon: Ban },
 ]
@@ -128,11 +130,11 @@ function CustomerHomePage({ services }: { services: Service[] | undefined }) {
   const activeServices = services?.filter((s) => s.is_active) ?? []
 
   // Hero text animate in
-  const heroVariants = {
+  const heroVariants: Variants = {
     hidden: {},
     visible: { transition: { staggerChildren: 0.08, delayChildren: 0.1 } },
   }
-  const heroItem = {
+  const heroItem: Variants = {
     hidden: { opacity: 0, y: 32 },
     visible: { opacity: 1, y: 0, transition: { duration: 0.85, ease: [0.16, 1, 0.3, 1] } },
   }

@@ -3,11 +3,12 @@ import { useQueryClient } from "@tanstack/react-query"
 import type { TimeSlot } from "@/types"
 
 const WS_BASE = (import.meta.env.VITE_API_URL ?? "http://localhost:8000")
-  .replace(/^https?/, (p) => (p === "https" ? "wss" : "ws"))
+  .replace(/^https?/, (protocol: string) => (protocol === "https" ? "wss" : "ws"))
 
 export function useSlotWebSocket(
   serviceId: string | undefined,
   date: string | undefined,
+  staffId: string = "any",
 ): { connected: boolean } {
   const queryClient = useQueryClient()
   const [connected, setConnected] = useState(false)
@@ -36,14 +37,20 @@ export function useSlotWebSocket(
 
         ws.onmessage = (ev) => {
           try {
-            const msg = JSON.parse(ev.data) as { type: string; start_time: string; status: TimeSlot["status"] }
+            const msg = JSON.parse(ev.data) as {
+              type: string
+              start_time: string
+              staff_id?: string
+              status: TimeSlot["status"]
+            }
             if (msg.type !== "slot_update") return
+            if (staffId !== "any" && msg.staff_id && msg.staff_id !== staffId) return
 
             // Normalize both timestamps to ms to handle Z vs +00:00 format differences
             const msgMs = new Date(msg.start_time).getTime()
 
             queryClient.setQueryData<TimeSlot[]>(
-              ["slots", serviceId, date],
+              ["slots", serviceId, date, staffId],
               (prev) =>
                 prev?.map((slot) =>
                   new Date(slot.start_time).getTime() === msgMs
@@ -74,7 +81,7 @@ export function useSlotWebSocket(
       wsRef.current?.close()
       wsRef.current = null
     }
-  }, [date, serviceId, queryClient])
+  }, [date, serviceId, staffId, queryClient])
 
   return { connected }
 }

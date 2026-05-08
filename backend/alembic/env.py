@@ -19,9 +19,16 @@ import app.db.models  # noqa: F401 — registers all models with Base.metadata
 target_metadata = Base.metadata
 
 
+def _migration_url() -> str:
+    configured = config.get_main_option("sqlalchemy.url")
+    if configured and configured != "placeholder":
+        return configured
+    return settings.DATABASE_URL
+
+
 def run_migrations_offline() -> None:
     context.configure(
-        url=settings.DATABASE_URL,
+        url=_migration_url(),
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -38,7 +45,7 @@ def do_run_migrations(connection: Connection) -> None:
 
 async def run_async_migrations() -> None:
     configuration = config.get_section(config.config_ini_section, {})
-    configuration["sqlalchemy.url"] = settings.DATABASE_URL
+    configuration["sqlalchemy.url"] = _migration_url()
 
     connectable = async_engine_from_config(
         configuration,

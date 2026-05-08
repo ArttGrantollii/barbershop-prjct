@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time as time_t, timedelta, timezone
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -22,6 +22,8 @@ from app.services.availability_service import slot_cooldown_key, slot_hold_key
 
 logger = structlog.get_logger(__name__)
 
+USER_HOLD_PREFIX = "user_active_hold"
+
 
 def _utc(dt: datetime) -> datetime:
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
@@ -30,6 +32,45 @@ def _utc(dt: datetime) -> datetime:
 def _salon_date(dt: datetime) -> date:
     """Return the calendar date of `dt` as observed in the salon's local timezone."""
     return _utc(dt).astimezone(ZoneInfo(settings.SALON_TIMEZONE)).date()
+
+
+def _wall_time(target_date: date, value: time_t) -> datetime:
+    salon_tz = ZoneInfo(settings.SALON_TIMEZONE)
+    return datetime(
+        target_date.year,
+        target_date.month,
+        target_date.day,
+        value.hour,
+        value.minute,
+        tzinfo=salon_tz,
+    )
+
+
+async def _staff_is_working(
+    staff_repo: StaffRepository,
+    business_repo: BusinessRepository,
+    staff_id: UUID,
+    start_time: datetime,
+    end_time: datetime,
+) -> bool:
+    salon_day = _salon_date(start_time)
+    if await business_repo.is_date_blocked(salon_day):
+        return False
+
+    staff_hours = await staff_repo.get_hours_for_day(staff_id, salon_day.weekday())
+    global_hours = await business_repo.get_hours_for_day(salon_day.weekday()) if staff_hours is None else None
+    effective_hours = staff_hours or global_hours
+    if not effective_hours or effective_hours.is_closed:
+        return False
+
+    open_at = _wall_time(salon_day, effective_hours.open_time)
+    close_at = _wall_time(salon_day, effective_hours.close_time)
+    if start_time < open_at or end_time > close_at:
+        return False
+
+    if await staff_repo.has_blocked_overlap(staff_id, start_time, end_time):
+        return False
+    return True
 
 
 async def _resolve_staff_id(
@@ -53,12 +94,18 @@ async def _resolve_staff_id(
     serves both modes.
     """
     staff_repo = StaffRepository(db)
+    business_repo = BusinessRepository(db)
 
     if preferred_staff_id is not None:
         if not await staff_repo.staff_offers_service(preferred_staff_id, service_id):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="That stylist does not offer this service.",
+            )
+        if not await _staff_is_working(staff_repo, business_repo, preferred_staff_id, start_time, end_time):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="That stylist is not working at this time.",
             )
         if await redis.get(slot_hold_key(preferred_staff_id, start_time)):
             raise HTTPException(
@@ -75,10 +122,12 @@ async def _resolve_staff_id(
     eligible = await staff_repo.get_active_for_service(service_id)
     if not eligible:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
+                status_code=status.HTTP_409_CONFLICT,
             detail="No stylists are configured for this service.",
         )
     for staff in eligible:
+        if not await _staff_is_working(staff_repo, business_repo, staff.id, start_time, end_time):
+            continue
         if await redis.get(slot_hold_key(staff.id, start_time)):
             continue
         if await booking_repo.has_overlap(start_time, end_time, staff_id=staff.id):
@@ -117,6 +166,10 @@ def _cancel_count_key(user_id: UUID) -> str:
     return f"cancel_count:{user_id}:{today}"
 
 
+def _user_hold_key(user_id: UUID) -> str:
+    return f"{USER_HOLD_PREFIX}:{user_id}"
+
+
 async def hold_slot(
     db: AsyncSession,
     redis: Redis,
@@ -153,30 +206,48 @@ async def hold_slot(
             detail="You already have a booking on this day. Please cancel it before holding another slot.",
         )
 
+    user_hold_key = _user_hold_key(user_id)
+    active_hold = await redis.set(
+        user_hold_key,
+        "pending",
+        nx=True,
+        ex=settings.SLOT_HOLD_TTL_SECONDS,
+    )
+    if not active_hold:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="You already have a slot on hold. Release it or wait for it to expire before holding another.",
+        )
+
     # Resolve the stylist. Concurrent callers can pick the same one between
     # the resolver's check and our SET NX — re-resolve on failure so the
     # second caller still gets a stylist if any others are free.
     last_exc: HTTPException | None = None
-    for _ in range(3):
-        resolved_staff_id = await _resolve_staff_id(
-            db, redis, booking_repo, service_id, start_time, end_time, preferred_staff_id=staff_id,
-        )
-        key = slot_hold_key(resolved_staff_id, start_time)
-        acquired = await redis.set(key, str(user_id), nx=True, ex=settings.SLOT_HOLD_TTL_SECONDS)
-        if acquired:
-            break
-        last_exc = HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Slot is already held",
-        )
-        if staff_id is not None:
-            # Caller asked for a specific stylist; don't substitute.
-            raise last_exc
-    else:
-        raise last_exc or HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Could not reserve a stylist — please try again.",
-        )
+    try:
+        for _ in range(3):
+            resolved_staff_id = await _resolve_staff_id(
+                db, redis, booking_repo, service_id, start_time, end_time, preferred_staff_id=staff_id,
+            )
+            key = slot_hold_key(resolved_staff_id, start_time)
+            acquired = await redis.set(key, str(user_id), nx=True, ex=settings.SLOT_HOLD_TTL_SECONDS)
+            if acquired:
+                await redis.set(user_hold_key, key, ex=settings.SLOT_HOLD_TTL_SECONDS)
+                break
+            last_exc = HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Slot is already held",
+            )
+            if staff_id is not None:
+                # Caller asked for a specific stylist; don't substitute.
+                raise last_exc
+        else:
+            raise last_exc or HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Could not reserve a stylist. Please try again.",
+            )
+    except Exception:
+        await redis.delete(user_hold_key)
+        raise
 
     logger.info(
         "slot_held",
@@ -232,6 +303,7 @@ async def release_hold(
         holder = await redis.get(key)
         if holder == str(user_id):
             await redis.delete(key)
+            await redis.delete(_user_hold_key(user_id))
             room = start_time.date().isoformat()
             await manager.broadcast(room, {
                 "type": "slot_update",
@@ -326,6 +398,11 @@ async def create_booking(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="That stylist does not offer this service.",
             )
+        if not await _staff_is_working(staff_repo, BusinessRepository(db), resolved_staff_id, start_time, end_time):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="That stylist is not working at this time.",
+            )
         held_by = await redis.get(slot_hold_key(resolved_staff_id, start_time))
         if held_by and held_by != str(user_id):
             raise HTTPException(
@@ -358,6 +435,7 @@ async def create_booking(
     # Consume our hold (if any). Whichever staff we landed on, that's the
     # hold key to free.
     await redis.delete(slot_hold_key(resolved_staff_id, start_time))
+    await redis.delete(_user_hold_key(user_id))
 
     logger.info(
         "booking_created",
@@ -470,13 +548,18 @@ async def reschedule_booking(
     # Default to keeping the same stylist. Callers may override (e.g. an
     # admin moving a booking onto a different chair) by passing new_staff_id.
     target_staff_id = new_staff_id or booking.staff_id
+    staff_repo = StaffRepository(db)
     if new_staff_id is not None:
-        staff_repo = StaffRepository(db)
         if not await staff_repo.staff_offers_service(new_staff_id, booking.service_id):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="That stylist does not offer this service.",
             )
+    if not await _staff_is_working(staff_repo, BusinessRepository(db), target_staff_id, new_start_time, new_end_time):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="That stylist is not working at this time.",
+        )
 
     # Quick-fail before the UPDATE — friendlier 409 than the integrity error
     # we'd otherwise get from the EXCLUDE constraint at commit time. Scope

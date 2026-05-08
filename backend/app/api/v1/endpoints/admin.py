@@ -1,9 +1,11 @@
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.dependencies import get_current_admin
 from app.db.models.booking import BookingStatus
 from app.db.models.user import User
@@ -13,7 +15,13 @@ from app.db.repositories.business_repository import BusinessRepository
 from app.db.repositories.service_repository import ServiceRepository
 from app.db.repositories.staff_repository import StaffRepository
 from app.db.session import get_db
-from app.schemas.booking import BookingCancelRequest, BookingDetailResponse, BookingPage
+from app.schemas.booking import (
+    AdminDashboardResponse,
+    BookingCancelRequest,
+    BookingDetailResponse,
+    BookingPage,
+    BookingRescheduleRequest,
+)
 from app.schemas.business import (
     BlockedDateCreate,
     BlockedDateResponse,
@@ -22,15 +30,66 @@ from app.schemas.business import (
 )
 from app.schemas.service import ServiceCreate, ServiceResponse, ServiceUpdate
 from app.schemas.staff import (
+    StaffBlockedTimeCreate,
+    StaffBlockedTimeResponse,
     StaffCreate,
     StaffResponse,
     StaffServicesUpdate,
     StaffUpdate,
+    StaffWorkingHoursResponse,
+    StaffWorkingHoursUpdate,
     StaffWithServicesResponse,
 )
-from app.services.booking_service import cancel_booking
+from app.services.booking_service import cancel_booking, reschedule_booking
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+def _salon_day_bounds(target_date: date) -> tuple[datetime, datetime]:
+    tz = ZoneInfo(settings.SALON_TIMEZONE)
+    day_start = datetime(target_date.year, target_date.month, target_date.day, tzinfo=tz)
+    return day_start, day_start + timedelta(days=1)
+
+
+@router.get("/dashboard", response_model=AdminDashboardResponse)
+async def dashboard(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+) -> AdminDashboardResponse:
+    """Aggregate dashboard metrics in the backend so the admin UI never
+    derives business totals from a capped bookings page."""
+    repo = BookingRepository(db)
+    now = datetime.now(timezone.utc)
+    salon_today = now.astimezone(ZoneInfo(settings.SALON_TIMEZONE)).date()
+    today_start, today_end = _salon_day_bounds(salon_today)
+    week_end = now + timedelta(days=7)
+
+    today_schedule = await repo.get_between_with_details(
+        today_start,
+        today_end,
+        status=BookingStatus.CONFIRMED,
+    )
+    today_revenue = await repo.revenue_between(
+        today_start,
+        today_end,
+        status=BookingStatus.CONFIRMED,
+    )
+    week_bookings_count = await repo.count_between(
+        now,
+        week_end,
+        status=BookingStatus.CONFIRMED,
+    )
+    confirmed_total = await repo.count_all(status=BookingStatus.CONFIRMED)
+    cancelled_total = await repo.count_all(status=BookingStatus.CANCELLED)
+
+    return AdminDashboardResponse(
+        today_bookings_count=len(today_schedule),
+        today_revenue=today_revenue,
+        week_bookings_count=week_bookings_count,
+        confirmed_total=confirmed_total,
+        cancelled_total=cancelled_total,
+        today_schedule=today_schedule,
+    )
 
 # ── Services ──────────────────────────────────────────────────────────────────
 
@@ -225,6 +284,82 @@ async def set_staff_services(
     return _staff_payload(staff)
 
 
+@router.get("/staff/{staff_id}/working-hours", response_model=list[StaffWorkingHoursResponse])
+async def get_staff_working_hours(
+    staff_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    repo = StaffRepository(db)
+    if not await repo.get_by_id(staff_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Staff not found")
+    return await repo.get_all_hours(staff_id)
+
+
+@router.put("/staff/{staff_id}/working-hours/{day_of_week}", response_model=StaffWorkingHoursResponse)
+async def update_staff_working_hours(
+    staff_id: uuid.UUID,
+    day_of_week: int,
+    body: StaffWorkingHoursUpdate,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    if not 0 <= day_of_week <= 6:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="day_of_week must be 0-6")
+    repo = StaffRepository(db)
+    if not await repo.get_by_id(staff_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Staff not found")
+    current = await repo.get_hours_for_day(staff_id, day_of_week)
+    patch = body.model_dump(exclude_none=True)
+    open_time = patch.get("open_time") or (current.open_time if current else datetime.strptime("09:00", "%H:%M").time())
+    close_time = patch.get("close_time") or (current.close_time if current else datetime.strptime("17:00", "%H:%M").time())
+    if not patch.get("is_closed", current.is_closed if current else False) and close_time <= open_time:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="close_time must be after open_time")
+    return await repo.upsert_hours(
+        staff_id=staff_id,
+        day_of_week=day_of_week,
+        open_time=open_time,
+        close_time=close_time,
+        is_closed=patch.get("is_closed", current.is_closed if current else False),
+    )
+
+
+@router.get("/staff/{staff_id}/blocked-times", response_model=list[StaffBlockedTimeResponse])
+async def get_staff_blocked_times(
+    staff_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    repo = StaffRepository(db)
+    if not await repo.get_by_id(staff_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Staff not found")
+    return await repo.get_blocked_times(staff_id)
+
+
+@router.post("/staff/{staff_id}/blocked-times", response_model=StaffBlockedTimeResponse, status_code=status.HTTP_201_CREATED)
+async def create_staff_blocked_time(
+    staff_id: uuid.UUID,
+    body: StaffBlockedTimeCreate,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    repo = StaffRepository(db)
+    if not await repo.get_by_id(staff_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Staff not found")
+    return await repo.create_blocked_time(staff_id, body.start_time, body.end_time, body.reason)
+
+
+@router.delete("/staff/{staff_id}/blocked-times/{blocked_time_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_staff_blocked_time(
+    staff_id: uuid.UUID,
+    blocked_time_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    if not await StaffRepository(db).delete_blocked_time(staff_id, blocked_time_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Blocked time not found")
+
+
 @router.delete("/staff/{staff_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_staff(
     staff_id: uuid.UUID,
@@ -283,6 +418,25 @@ async def admin_cancel(
     admin: User = Depends(get_current_admin),
 ):
     return await cancel_booking(db, redis, booking_id, admin.id, reason=body.reason, is_admin=True)
+
+
+@router.post("/bookings/{booking_id}/reschedule", response_model=BookingDetailResponse)
+async def admin_reschedule(
+    booking_id: uuid.UUID,
+    body: BookingRescheduleRequest,
+    db: AsyncSession = Depends(get_db),
+    redis=Depends(get_redis),
+    admin: User = Depends(get_current_admin),
+):
+    return await reschedule_booking(
+        db,
+        redis,
+        booking_id,
+        admin.id,
+        body.start_time,
+        is_admin=True,
+        new_staff_id=body.staff_id,
+    )
 
 
 @router.post("/bookings/{booking_id}/complete", response_model=BookingDetailResponse)

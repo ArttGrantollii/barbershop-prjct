@@ -75,3 +75,12 @@ class BookingPage(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class AdminDashboardResponse(BaseModel):
+    today_bookings_count: int
+    today_revenue: Decimal
+    week_bookings_count: int
+    confirmed_total: int
+    cancelled_total: int
+    today_schedule: list[BookingDetailResponse]

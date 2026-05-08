@@ -16,6 +16,7 @@ import ProfilePage from "@/pages/ProfilePage"
 import AdminDashboardPage from "@/pages/admin/AdminDashboardPage"
 import AdminBookingsPage from "@/pages/admin/AdminBookingsPage"
 import AdminServicesPage from "@/pages/admin/AdminServicesPage"
+import AdminStaffPage from "@/pages/admin/AdminStaffPage"
 import AdminHoursPage from "@/pages/admin/AdminHoursPage"
 import AdminBlockedDatesPage from "@/pages/admin/AdminBlockedDatesPage"
 
@@ -52,6 +53,7 @@ function AnimatedRoutes() {
           <Route path="dashboard" element={<PageTransition><AdminDashboardPage /></PageTransition>} />
           <Route path="bookings" element={<PageTransition><AdminBookingsPage /></PageTransition>} />
           <Route path="services" element={<PageTransition><AdminServicesPage /></PageTransition>} />
+          <Route path="staff" element={<PageTransition><AdminStaffPage /></PageTransition>} />
           <Route path="hours" element={<PageTransition><AdminHoursPage /></PageTransition>} />
           <Route path="blocked-dates" element={<PageTransition><AdminBlockedDatesPage /></PageTransition>} />
         </Route>

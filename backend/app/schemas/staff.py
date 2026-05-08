@@ -1,7 +1,8 @@
 import re
 import uuid
+from datetime import datetime, time
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 
 def _validate_phone(v: str | None) -> str | None:
@@ -71,6 +72,24 @@ class StaffServicesUpdate(BaseModel):
     service_ids: list[uuid.UUID]
 
 
+class StaffWorkingHoursUpdate(BaseModel):
+    open_time: time | None = None
+    close_time: time | None = None
+    is_closed: bool | None = None
+
+
+class StaffBlockedTimeCreate(BaseModel):
+    start_time: datetime
+    end_time: datetime
+    reason: str | None = None
+
+    @model_validator(mode="after")
+    def validate_range(self):
+        if self.end_time <= self.start_time:
+            raise ValueError("end_time must be after start_time")
+        return self
+
+
 class StaffResponse(BaseModel):
     model_config = {"from_attributes": True}
 
@@ -86,3 +105,24 @@ class StaffWithServicesResponse(StaffResponse):
     # Returned by admin endpoints so the UI can render the assignment matrix
     # in a single round trip.
     service_ids: list[uuid.UUID] = []
+
+
+class StaffWorkingHoursResponse(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: uuid.UUID
+    staff_id: uuid.UUID
+    day_of_week: int
+    open_time: time
+    close_time: time
+    is_closed: bool
+
+
+class StaffBlockedTimeResponse(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: uuid.UUID
+    staff_id: uuid.UUID
+    start_time: datetime
+    end_time: datetime
+    reason: str | None

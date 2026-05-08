@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { parseISO, isPast } from "date-fns"
-import { Calendar, Clock, ChevronLeft, ChevronRight, Search, X } from "lucide-react"
+import { Calendar, CalendarClock, Clock, ChevronLeft, ChevronRight, Search, X } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { useBusinessInfo } from "@/hooks/useBusinessInfo"
+import { RescheduleDialog } from "@/components/RescheduleDialog"
 import { salonDateShort, salonTime } from "@/lib/datetime"
 import { cn } from "@/lib/utils"
 import api from "@/lib/api"
-import type { BookingPage, BookingStatus } from "@/types"
+import type { Booking, BookingPage, BookingStatus } from "@/types"
 
 const PAGE_SIZE = 20
 
@@ -48,6 +49,7 @@ export default function AdminBookingsPage() {
   const [startFrom, setStartFrom] = useState("")
   const [startTo, setStartTo] = useState("")
   const [page, setPage] = useState(0)
+  const [rescheduleBooking, setRescheduleBooking] = useState<Booking | null>(null)
 
   // Debounce: commit `searchInput` to `searchTerm` after 300ms of idle typing.
   useEffect(() => {
@@ -91,19 +93,31 @@ export default function AdminBookingsPage() {
 
   const cancelMutation = useMutation({
     mutationFn: (id: string) => api.post(`/api/v1/admin/bookings/${id}/cancel`, {}),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["admin-bookings"] }); toast({ title: "Booking cancelled" }) },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-bookings"] })
+      queryClient.invalidateQueries({ queryKey: ["admin-dashboard"] })
+      toast({ title: "Booking cancelled" })
+    },
     onError: (e: any) => toast({ variant: "destructive", title: e?.response?.data?.detail ?? "Error" }),
   })
 
   const completeMutation = useMutation({
     mutationFn: (id: string) => api.post(`/api/v1/admin/bookings/${id}/complete`, {}),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["admin-bookings"] }); toast({ title: "Marked as completed" }) },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-bookings"] })
+      queryClient.invalidateQueries({ queryKey: ["admin-dashboard"] })
+      toast({ title: "Marked as completed" })
+    },
     onError: (e: any) => toast({ variant: "destructive", title: e?.response?.data?.detail ?? "Error" }),
   })
 
   const noShowMutation = useMutation({
     mutationFn: (id: string) => api.post(`/api/v1/admin/bookings/${id}/no-show`, {}),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["admin-bookings"] }); toast({ title: "Marked as no-show" }) },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-bookings"] })
+      queryClient.invalidateQueries({ queryKey: ["admin-dashboard"] })
+      toast({ title: "Marked as no-show" })
+    },
     onError: (e: any) => toast({ variant: "destructive", title: e?.response?.data?.detail ?? "Error" }),
   })
 
@@ -235,6 +249,7 @@ export default function AdminBookingsPage() {
                       {booking.service && (
                         <span>{booking.service.duration_minutes} min · ${Number(booking.service.price).toFixed(2)}</span>
                       )}
+                      {booking.staff && <span>{booking.staff.name}</span>}
                     </div>
                     {booking.cancellation_reason && (
                       <p className="text-xs text-muted-foreground italic">{booking.cancellation_reason}</p>
@@ -244,13 +259,22 @@ export default function AdminBookingsPage() {
                   {booking.status === "confirmed" && (
                     <div className="flex gap-2 shrink-0 flex-wrap">
                       {!past ? (
-                        <button
-                          onClick={() => cancelMutation.mutate(booking.id)}
-                          disabled={cancelMutation.isPending}
-                          className="px-4 py-2 text-xs tracking-widest uppercase border border-border hover:bg-secondary transition-colors disabled:opacity-50"
-                        >
-                          Cancel
-                        </button>
+                        <>
+                          <button
+                            onClick={() => setRescheduleBooking(booking)}
+                            className="flex items-center gap-2 px-4 py-2 text-xs tracking-widest uppercase border border-border hover:bg-secondary transition-colors"
+                          >
+                            <CalendarClock className="h-3.5 w-3.5" />
+                            Reschedule
+                          </button>
+                          <button
+                            onClick={() => cancelMutation.mutate(booking.id)}
+                            disabled={cancelMutation.isPending}
+                            className="px-4 py-2 text-xs tracking-widest uppercase border border-border hover:bg-secondary transition-colors disabled:opacity-50"
+                          >
+                            Cancel
+                          </button>
+                        </>
                       ) : (
                         <button
                           onClick={() => noShowMutation.mutate(booking.id)}
@@ -300,6 +324,14 @@ export default function AdminBookingsPage() {
             </div>
           </div>
         </>
+      )}
+      {rescheduleBooking && (
+        <RescheduleDialog
+          booking={rescheduleBooking}
+          open={!!rescheduleBooking}
+          admin
+          onClose={() => setRescheduleBooking(null)}
+        />
       )}
     </div>
   )

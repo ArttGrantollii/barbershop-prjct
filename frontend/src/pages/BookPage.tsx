@@ -8,11 +8,12 @@ import { useBusinessInfo } from "@/hooks/useBusinessInfo"
 import { salonDateLong, salonDayKey, salonTime, salonTzAbbr } from "@/lib/datetime"
 import { cn } from "@/lib/utils"
 import api from "@/lib/api"
-import type { Service, TimeSlot } from "@/types"
+import type { Service, Staff, TimeSlot } from "@/types"
 
 interface HoldResponse {
   start_time: string
   end_time: string
+  staff_id: string
   expires_in_seconds: number
 }
 
@@ -22,6 +23,7 @@ interface HoldResponse {
 interface HeldSlot {
   serviceId: string
   startTime: string
+  staffId: string
 }
 
 type Step = 1 | 2 | 3
@@ -78,6 +80,7 @@ export default function BookPage() {
   // 1. state
   const [step, setStep] = useState<Step>(1)
   const [selectedService, setSelectedService] = useState<Service | null>(null)
+  const [selectedStaffId, setSelectedStaffId] = useState<string>("any")
   const [selectedDate, setSelectedDate] = useState("")
   const [selectedSlot, setSelectedSlot] = useState<TimeSlot | null>(null)
   const [notes, setNotes] = useState("")
@@ -90,7 +93,7 @@ export default function BookPage() {
 
   // 2. external hooks
   const { data: business } = useBusinessInfo()
-  const { connected: wsConnected } = useSlotWebSocket(selectedService?.id, selectedDate)
+  const { connected: wsConnected } = useSlotWebSocket(selectedService?.id, selectedDate, selectedStaffId)
 
   // 3. derived constants. `today` is the salon's local date — using browser-local
   // would let a user in a far-east timezone briefly see "tomorrow's" date as the
@@ -105,21 +108,30 @@ export default function BookPage() {
     queryFn: async () => (await api.get("/api/v1/services")).data,
   })
 
+  const { data: staffOptions = [], isLoading: staffLoading } = useQuery<Staff[]>({
+    queryKey: ["staff", selectedService?.id],
+    queryFn: async () => (await api.get(`/api/v1/staff/by-service/${selectedService!.id}`)).data,
+    enabled: !!selectedService,
+  })
+
   const { data: slots, isLoading: slotsLoading } = useQuery<TimeSlot[]>({
-    queryKey: ["slots", selectedService?.id, selectedDate],
-    queryFn: async () =>
-      (await api.get("/api/v1/availability", { params: { service_id: selectedService!.id, date: selectedDate } })).data,
+    queryKey: ["slots", selectedService?.id, selectedDate, selectedStaffId],
+    queryFn: async () => {
+      const params: Record<string, string> = { service_id: selectedService!.id, date: selectedDate }
+      if (selectedStaffId !== "any") params.staff_id = selectedStaffId
+      return (await api.get("/api/v1/availability", { params })).data
+    },
     enabled: !!selectedService && !!selectedDate,
   })
 
   // 5. mutations
   const holdMutation = useMutation({
-    mutationFn: async (input: { service_id: string; start_time: string }) => {
+    mutationFn: async (input: { service_id: string; start_time: string; staff_id?: string }) => {
       const { data } = await api.post<HoldResponse>("/api/v1/availability/hold", input)
       return { input, data }
     },
     onSuccess: ({ input, data }) => {
-      heldSlotRef.current = { serviceId: input.service_id, startTime: input.start_time }
+      heldSlotRef.current = { serviceId: input.service_id, startTime: input.start_time, staffId: data.staff_id }
       setHoldExpiresAt(Date.now() + data.expires_in_seconds * 1000)
       setStep(3)
     },
@@ -137,6 +149,7 @@ export default function BookPage() {
       const { data } = await api.post("/api/v1/bookings", {
         service_id: selectedService!.id,
         start_time: selectedSlot!.start_time,
+        staff_id: heldSlotRef.current?.staffId,
         notes: notes || null,
       })
       return data
@@ -169,7 +182,7 @@ export default function BookPage() {
     setHoldExpiresAt(null)
     try {
       await api.delete("/api/v1/availability/hold", {
-        data: { service_id: held.serviceId, start_time: held.startTime },
+        data: { service_id: held.serviceId, start_time: held.startTime, staff_id: held.staffId },
       })
     } catch {
       // intentional no-op — backend TTL handles it
@@ -222,7 +235,7 @@ export default function BookPage() {
       heldSlotRef.current = null
       api
         .delete("/api/v1/availability/hold", {
-          data: { service_id: held.serviceId, start_time: held.startTime },
+          data: { service_id: held.serviceId, start_time: held.startTime, staff_id: held.staffId },
         })
         .catch(() => {})
     }
@@ -257,6 +270,10 @@ export default function BookPage() {
     ? Math.max(0, Math.floor((holdExpiresAt - nowTick) / 1000))
     : 0
   const remainingMmSs = `${Math.floor(remainingSec / 60)}:${String(remainingSec % 60).padStart(2, "0")}`
+  const confirmedStaffName =
+    staffOptions.find((staff) => staff.id === heldSlotRef.current?.staffId)?.name ??
+    staffOptions.find((staff) => staff.id === selectedStaffId)?.name ??
+    "Any available stylist"
 
   return (
     <div className="container py-16 max-w-3xl">
@@ -278,7 +295,13 @@ export default function BookPage() {
               {services?.filter((s) => s.is_active).map((service, i, arr) => (
                 <button
                   key={service.id}
-                  onClick={() => { setSelectedService(service); setStep(2) }}
+                  onClick={() => {
+                    setSelectedService(service)
+                    setSelectedStaffId("any")
+                    setSelectedDate("")
+                    setSelectedSlot(null)
+                    setStep(2)
+                  }}
                   className={cn(
                     "group text-left w-full p-6 flex items-center justify-between gap-6 hover:bg-secondary transition-colors",
                     i < arr.length - 1 && "border-b border-border",
@@ -309,6 +332,45 @@ export default function BookPage() {
       {/* step 2 — date & time */}
       {step === 2 && (
         <div className="flex flex-col gap-8">
+          <div>
+            <p className="text-xs tracking-widest uppercase text-muted-foreground mb-4">Choose a Stylist</p>
+            {staffLoading ? (
+              <div className="border border-border p-6 text-xs text-muted-foreground tracking-widest uppercase">Loading stylists...</div>
+            ) : staffOptions.length === 0 ? (
+              <div className="border border-border p-6 text-xs text-muted-foreground tracking-widest uppercase">No stylists are assigned to this service.</div>
+            ) : (
+              <div className="grid sm:grid-cols-2 gap-px bg-border">
+                {[
+                  { id: "any", name: "Any stylist", phone: null },
+                  ...staffOptions,
+                ].map((staff) => {
+                  const active = selectedStaffId === staff.id
+                  return (
+                    <button
+                      key={staff.id}
+                      onClick={() => {
+                        setSelectedStaffId(staff.id)
+                        setSelectedSlot(null)
+                      }}
+                      className={cn(
+                        "bg-background text-left px-5 py-4 transition-colors hover:bg-secondary",
+                        active && "bg-foreground text-background hover:bg-foreground",
+                      )}
+                    >
+                      <p className="text-xs font-medium uppercase tracking-widest">{staff.name}</p>
+                      <p className={cn(
+                        "text-[10px] tracking-widest uppercase mt-1",
+                        active ? "text-background/70" : "text-muted-foreground",
+                      )}>
+                        {staff.id === "any" ? "Auto-assigns the first available stylist" : "Specific stylist"}
+                      </p>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
           <div>
             <p className="text-xs tracking-widest uppercase text-muted-foreground mb-4">Select a Date</p>
             <input
@@ -386,6 +448,7 @@ export default function BookPage() {
                 holdMutation.mutate({
                   service_id: selectedService.id,
                   start_time: selectedSlot.start_time,
+                  staff_id: selectedStaffId === "any" ? undefined : selectedStaffId,
                 })
               }}
               className="px-8 py-3 text-xs tracking-widest uppercase bg-foreground text-background hover:bg-foreground/90 transition-colors disabled:opacity-30"
@@ -414,6 +477,7 @@ export default function BookPage() {
                 { label: "Service",  value: selectedService.name },
                 { label: "Date",     value: salonDateLong(selectedSlot.start_time, tz) },
                 { label: "Time",     value: `${salonTime(selectedSlot.start_time, tz)}${tzAbbr ? ` ${tzAbbr}` : ""}` },
+                { label: "Stylist",  value: confirmedStaffName },
                 { label: "Duration", value: `${selectedService.duration_minutes} minutes` },
               ].map(({ label, value }, i, arr) => (
                 <div

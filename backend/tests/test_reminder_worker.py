@@ -1,9 +1,8 @@
 """Tests for the 24h reminder worker.
 
 These mock AsyncSessionLocal to avoid a live DB. The worker's contract is
-narrow — find candidate bookings, claim them by setting reminder_sent_at,
-then send — so a tight mock-based unit test is enough to catch regressions
-in that exact ordering.
+narrow: claim due bookings with `reminder_attempted_at`, send, then set
+`reminder_sent_at` only on successful delivery.
 """
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -17,13 +16,14 @@ MODULE = "app.workers.reminders"
 
 
 def _booking_mock(start_in_hours: float = 24, reminder_sent_at=None) -> MagicMock:
-    """Construct a minimally-populated Booking mock — only the attributes the
-    worker actually reads."""
+    """Construct a minimally-populated Booking mock."""
     b = MagicMock()
     b.id = uuid.uuid4()
     b.start_time = datetime.now(timezone.utc) + timedelta(hours=start_in_hours)
     b.end_time = b.start_time + timedelta(minutes=30)
+    b.reminder_attempted_at = None
     b.reminder_sent_at = reminder_sent_at
+    b.reminder_error = None
     b.user = MagicMock()
     b.user.name = "Test"
     b.user.email = "test@example.com"
@@ -36,8 +36,7 @@ def _booking_mock(start_in_hours: float = 24, reminder_sent_at=None) -> MagicMoc
 
 @pytest.fixture
 def mock_session_factory():
-    """Patch the worker's AsyncSessionLocal so each call yields a fresh mock
-    session whose execute() result we can program."""
+    """Patch the worker's AsyncSessionLocal so each call yields a mock session."""
     session = AsyncMock()
     session.commit = AsyncMock()
     factory = MagicMock()
@@ -56,16 +55,16 @@ class TestSendDueReminders:
         result.scalars.return_value = scalars
         mock_session_factory.execute = AsyncMock(return_value=result)
 
-        with patch(f"{MODULE}.notify_booking_reminder", new_callable=AsyncMock) as notify:
+        with patch(f"{MODULE}.notify_booking_reminder", new_callable=AsyncMock, return_value=True) as notify:
             sent = await send_due_reminders()
 
         assert sent == 2
         assert notify.await_count == 2
-        for b in bookings:
-            assert b.reminder_sent_at is not None
-        # Critical: claim (commit) must happen before send. If we sent first,
-        # a crash mid-loop would re-send on next pass.
-        mock_session_factory.commit.assert_awaited_once()
+        for booking in bookings:
+            assert booking.reminder_attempted_at is not None
+            assert booking.reminder_sent_at is not None
+            assert booking.reminder_error is None
+        assert mock_session_factory.commit.await_count == 2
 
     async def test_no_due_bookings_is_a_noop(self, mock_session_factory):
         scalars = MagicMock()
@@ -81,9 +80,7 @@ class TestSendDueReminders:
         notify.assert_not_called()
         mock_session_factory.commit.assert_not_called()
 
-    async def test_send_failure_does_not_unmark(self, mock_session_factory):
-        """If the notification API throws, we still leave reminder_sent_at set
-        — better to lose one reminder than spam the customer with duplicates."""
+    async def test_send_exception_marks_attempt_but_not_sent(self, mock_session_factory):
         booking = _booking_mock()
         scalars = MagicMock()
         scalars.all.return_value = [booking]
@@ -98,10 +95,28 @@ class TestSendDueReminders:
         ):
             sent = await send_due_reminders()
 
-        # Counted as 0 successful sends, but reminder_sent_at still holds.
         assert sent == 0
-        assert booking.reminder_sent_at is not None
-        mock_session_factory.commit.assert_awaited_once()
+        assert booking.reminder_attempted_at is not None
+        assert booking.reminder_sent_at is None
+        assert "ses down" in booking.reminder_error
+        assert mock_session_factory.commit.await_count == 2
+
+    async def test_backend_false_marks_attempt_but_not_sent(self, mock_session_factory):
+        booking = _booking_mock()
+        scalars = MagicMock()
+        scalars.all.return_value = [booking]
+        result = MagicMock()
+        result.scalars.return_value = scalars
+        mock_session_factory.execute = AsyncMock(return_value=result)
+
+        with patch(f"{MODULE}.notify_booking_reminder", new_callable=AsyncMock, return_value=False):
+            sent = await send_due_reminders()
+
+        assert sent == 0
+        assert booking.reminder_attempted_at is not None
+        assert booking.reminder_sent_at is None
+        assert booking.reminder_error == "notification backend returned failure"
+        assert mock_session_factory.commit.await_count == 2
 
     async def test_skips_booking_with_missing_relations(self, mock_session_factory):
         booking = _booking_mock()
@@ -117,3 +132,7 @@ class TestSendDueReminders:
 
         assert sent == 0
         notify.assert_not_called()
+        assert booking.reminder_attempted_at is not None
+        assert booking.reminder_sent_at is None
+        assert booking.reminder_error == "missing user or service relation"
+        assert mock_session_factory.commit.await_count == 2

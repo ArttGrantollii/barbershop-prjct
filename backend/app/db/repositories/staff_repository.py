@@ -1,11 +1,12 @@
 import uuid
+from datetime import datetime, time as time_t
 
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.models.service import Service
-from app.db.models.staff import Staff, service_staff
+from app.db.models.staff import Staff, StaffBlockedTime, StaffWorkingHours, service_staff
 from app.db.repositories.base import BaseRepository
 
 
@@ -101,3 +102,101 @@ class StaffRepository(BaseRepository[Staff]):
         await self.db.commit()
         await self.db.refresh(staff, attribute_names=["services"])
         return staff
+
+    async def get_hours_for_day(self, staff_id: uuid.UUID, day_of_week: int) -> StaffWorkingHours | None:
+        result = await self.db.execute(
+            select(StaffWorkingHours).where(
+                StaffWorkingHours.staff_id == staff_id,
+                StaffWorkingHours.day_of_week == day_of_week,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_all_hours(self, staff_id: uuid.UUID) -> list[StaffWorkingHours]:
+        result = await self.db.execute(
+            select(StaffWorkingHours)
+            .where(StaffWorkingHours.staff_id == staff_id)
+            .order_by(StaffWorkingHours.day_of_week)
+        )
+        return list(result.scalars().all())
+
+    async def upsert_hours(
+        self,
+        staff_id: uuid.UUID,
+        day_of_week: int,
+        open_time: time_t,
+        close_time: time_t,
+        is_closed: bool = False,
+    ) -> StaffWorkingHours:
+        existing = await self.get_hours_for_day(staff_id, day_of_week)
+        if existing:
+            existing.open_time = open_time
+            existing.close_time = close_time
+            existing.is_closed = is_closed
+            await self.db.commit()
+            await self.db.refresh(existing)
+            return existing
+
+        hours = StaffWorkingHours(
+            staff_id=staff_id,
+            day_of_week=day_of_week,
+            open_time=open_time,
+            close_time=close_time,
+            is_closed=is_closed,
+        )
+        self.db.add(hours)
+        await self.db.commit()
+        await self.db.refresh(hours)
+        return hours
+
+    async def get_blocked_times(self, staff_id: uuid.UUID) -> list[StaffBlockedTime]:
+        result = await self.db.execute(
+            select(StaffBlockedTime)
+            .where(StaffBlockedTime.staff_id == staff_id)
+            .order_by(StaffBlockedTime.start_time)
+        )
+        return list(result.scalars().all())
+
+    async def create_blocked_time(
+        self,
+        staff_id: uuid.UUID,
+        start_time: datetime,
+        end_time: datetime,
+        reason: str | None = None,
+    ) -> StaffBlockedTime:
+        blocked = StaffBlockedTime(
+            staff_id=staff_id,
+            start_time=start_time,
+            end_time=end_time,
+            reason=reason,
+        )
+        self.db.add(blocked)
+        await self.db.commit()
+        await self.db.refresh(blocked)
+        return blocked
+
+    async def delete_blocked_time(self, staff_id: uuid.UUID, blocked_time_id: uuid.UUID) -> bool:
+        result = await self.db.execute(
+            select(StaffBlockedTime).where(
+                StaffBlockedTime.id == blocked_time_id,
+                StaffBlockedTime.staff_id == staff_id,
+            )
+        )
+        blocked = result.scalar_one_or_none()
+        if blocked is None:
+            return False
+        await self.db.delete(blocked)
+        await self.db.commit()
+        return True
+
+    async def has_blocked_overlap(self, staff_id: uuid.UUID, start_time: datetime, end_time: datetime) -> bool:
+        result = await self.db.execute(
+            select(
+                exists().where(
+                    StaffBlockedTime.staff_id == staff_id,
+                    StaffBlockedTime.start_time < end_time,
+                    StaffBlockedTime.end_time > start_time,
+                )
+            )
+        )
+        return bool(result.scalar())
