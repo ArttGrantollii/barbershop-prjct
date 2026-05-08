@@ -41,10 +41,47 @@ export interface UserSummary {
   phone: string | null
 }
 
+export interface Staff {
+  id: string
+  name: string
+  phone: string | null
+  photo_url: string | null
+  is_active: boolean
+  display_order: number
+}
+
+export interface StaffWithServices extends Staff {
+  service_ids: string[]
+}
+
+export interface StaffWorkingHours {
+  id: string
+  staff_id: string
+  day_of_week: number
+  open_time: string
+  close_time: string
+  is_closed: boolean
+}
+
+export interface StaffBlockedTime {
+  id: string
+  staff_id: string
+  start_time: string
+  end_time: string
+  reason: string | null
+}
+
+export interface StaffSummary {
+  id: string
+  name: string
+  photo_url: string | null
+}
+
 export interface Booking {
   id: string
   user_id: string
   service_id: string
+  staff_id: string
   start_time: string
   end_time: string
   status: BookingStatus
@@ -53,6 +90,7 @@ export interface Booking {
   created_at: string
   service: ServiceSummary | null
   user: UserSummary | null
+  staff: StaffSummary | null
 }
 
 export interface BusinessHours {
@@ -74,6 +112,15 @@ export interface BookingPage {
   total: number
   limit: number
   offset: number
+}
+
+export interface AdminDashboard {
+  today_bookings_count: number
+  today_revenue: string
+  week_bookings_count: number
+  confirmed_total: number
+  cancelled_total: number
+  today_schedule: Booking[]
 }
 
 export type SlotStatus = "available" | "held" | "booked" | "cooldown"

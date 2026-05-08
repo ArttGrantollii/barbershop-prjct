@@ -173,6 +173,7 @@ export default function MyBookingsPage() {
                   {booking.service && (
                     <p className="text-xs text-muted-foreground tracking-wider">
                       {booking.service.duration_minutes} min · ${Number(booking.service.price).toFixed(2)}
+                      {booking.staff && ` · ${booking.staff.name}`}
                     </p>
                   )}
 

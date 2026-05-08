@@ -1,1 +1,114 @@
-# barbershop-prjct
+# Vendos Salon
+
+Full-stack salon/barbershop booking app with a FastAPI backend, React/Vite frontend, PostgreSQL, Redis-backed slot holds, Alembic migrations, and Docker Compose for local development.
+
+## Stack
+
+- Backend: FastAPI, SQLAlchemy async, Alembic, PostgreSQL, Redis
+- Frontend: React, Vite, TypeScript, Tailwind CSS, TanStack Query
+- Background work: in-process booking reminder loop
+- Local orchestration: Docker Compose
+
+## Environment
+
+Copy the example env file and fill the required secret:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+`SECRET_KEY` must be at least 32 characters. Generate one with any secure random generator. If Python is available:
+
+```powershell
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+Important local values:
+
+- `SALON_TIMEZONE`: IANA timezone for business hours and customer-facing dates.
+- `FIRST_ADMIN_EMAIL` / `FIRST_ADMIN_PASSWORD`: optional first admin seed on backend startup.
+- `ALLOWED_ORIGINS`: comma-separated browser origins allowed by CORS.
+- `NOTIFICATIONS_BACKEND`: `console` for local development, `aws` for SES/SNS notification sending.
+
+## Run Locally With Docker
+
+```powershell
+docker compose up --build
+```
+
+Services:
+
+- Frontend: `http://localhost:3000`
+- Backend API: `http://localhost:8000`
+- Health check: `http://localhost:8000/health`
+- API schema: `http://localhost:8000/api/v1/openapi.json`
+
+The backend container runs Alembic migrations on startup in the current dev configuration.
+
+The default `docker-compose.yml` is for development. It uses bind mounts,
+Vite dev server, and backend autoreload.
+
+## Production Compose
+
+Production has a separate compose file and Dockerfile behavior:
+
+```powershell
+Copy-Item .env.prod.example .env
+docker compose -f docker-compose.prod.yml up --build
+```
+
+Production differences:
+
+- backend runs Uvicorn without `--reload`
+- migrations run in a one-shot `migrate` service before the backend starts
+- frontend is built with `npm ci` and served by nginx
+- no source-code bind mounts
+- Postgres credentials are required by environment expansion
+
+For a real deployment, put TLS, domain routing, and any API/frontend reverse
+proxy in front of these containers. The production compose file is a hardened
+container baseline, not a complete cloud/platform deployment.
+
+## Validation
+
+Backend tests are currently easiest to run inside the backend container:
+
+```powershell
+docker compose exec backend pytest
+```
+
+The backend suite includes integration tests that create and drop a separate
+`vendos_salon_integration_test` PostgreSQL database, run Alembic migrations
+against it, and verify database-level booking constraints. Run them against the
+Docker Compose database or another Postgres user with database creation rights.
+
+Frontend dependencies should be installed from the lockfile:
+
+```powershell
+cd frontend
+npm.cmd ci
+npm.cmd run build
+```
+
+On Windows PowerShell, prefer `npm.cmd` over `npm` if the `npm.ps1` shim hits permission issues.
+
+## Known Local Tooling Notes
+
+- Local Python may not be installed on every development machine; Docker is the reliable backend test path.
+- Docker Desktop may require elevated access on Windows for commands that connect to the daemon.
+- If npm cannot write under the default user cache, set a writable cache location:
+
+```powershell
+$env:NPM_CONFIG_CACHE='C:\tmp\npm-cache'
+npm.cmd ci
+```
+
+## Development Priorities
+
+Current near-term engineering plan:
+
+1. Make the multi-staff feature complete in the frontend: admin staff management, service assignment, stylist picker, and staff display on bookings.
+2. Move dashboard metrics to backend aggregate endpoints.
+3. Fix reminder delivery accounting so failed sends are not counted as successful.
+4. Add real API/database/Redis integration tests around booking flows.
+5. Split dev and production deployment configuration.

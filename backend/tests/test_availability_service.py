@@ -37,6 +37,8 @@ def _make_staff() -> MagicMock:
 def _patch_staff_repo(MockStaffRepo, staff: MagicMock) -> None:
     """Configure StaffRepository so get_slots finds `staff` for any service."""
     MockStaffRepo.return_value.get_active_for_service = AsyncMock(return_value=[staff])
+    MockStaffRepo.return_value.get_hours_for_day = AsyncMock(return_value=None)
+    MockStaffRepo.return_value.has_blocked_overlap = AsyncMock(return_value=False)
 
 
 class TestGetSlots:
@@ -53,7 +55,11 @@ class TestGetSlots:
     async def test_closed_day_returns_empty(self, mock_db, mock_redis):
         target = date(2026, 6, 15)
 
-        with patch(f"{MODULE}.BusinessRepository") as MockBizRepo:
+        with (
+            patch(f"{MODULE}.BusinessRepository") as MockBizRepo,
+            patch(f"{MODULE}.StaffRepository") as MockStaffRepo,
+        ):
+            _patch_staff_repo(MockStaffRepo, _make_staff())
             MockBizRepo.return_value.is_date_blocked = AsyncMock(return_value=False)
             MockBizRepo.return_value.get_hours_for_day = AsyncMock(
                 return_value=_make_hours(is_closed=True)
@@ -66,7 +72,11 @@ class TestGetSlots:
     async def test_no_hours_configured_returns_empty(self, mock_db, mock_redis):
         target = date(2026, 6, 15)
 
-        with patch(f"{MODULE}.BusinessRepository") as MockBizRepo:
+        with (
+            patch(f"{MODULE}.BusinessRepository") as MockBizRepo,
+            patch(f"{MODULE}.StaffRepository") as MockStaffRepo,
+        ):
+            _patch_staff_repo(MockStaffRepo, _make_staff())
             MockBizRepo.return_value.is_date_blocked = AsyncMock(return_value=False)
             MockBizRepo.return_value.get_hours_for_day = AsyncMock(return_value=None)
 
@@ -233,3 +243,49 @@ class TestGetSlots:
         for slot in result:
             delta = slot["end_time"] - slot["start_time"]
             assert delta == timedelta(minutes=30)
+
+    async def test_staff_hours_override_global_hours(self, mock_db, mock_redis):
+        target = (datetime.now(timezone.utc) + timedelta(days=1)).date()
+        service = _make_service(duration_minutes=60)
+        staff = _make_staff()
+        mock_redis.get.return_value = None
+
+        with (
+            patch(f"{MODULE}.BusinessRepository") as MockBizRepo,
+            patch(f"{MODULE}.BookingRepository") as MockBookingRepo,
+            patch(f"{MODULE}.StaffRepository") as MockStaffRepo,
+        ):
+            _patch_staff_repo(MockStaffRepo, staff)
+            MockStaffRepo.return_value.get_hours_for_day = AsyncMock(return_value=_make_hours(open_h=12, close_h=15))
+            MockBizRepo.return_value.is_date_blocked = AsyncMock(return_value=False)
+            MockBizRepo.return_value.get_hours_for_day = AsyncMock(return_value=_make_hours(open_h=9, close_h=18))
+            MockBookingRepo.return_value.has_overlap = AsyncMock(return_value=False)
+
+            result = await get_slots(mock_db, mock_redis, service, target, staff_id=staff.id)
+
+        assert len(result) == 3
+        assert {slot["start_time"].hour for slot in result} == {12, 13, 14}
+
+    async def test_staff_blocked_time_marks_slot_unavailable(self, mock_db, mock_redis):
+        target = (datetime.now(timezone.utc) + timedelta(days=1)).date()
+        service = _make_service(duration_minutes=60)
+        staff = _make_staff()
+        mock_redis.get.return_value = None
+
+        async def blocked_overlap(_staff_id, start, _end):
+            return start.hour == 10
+
+        with (
+            patch(f"{MODULE}.BusinessRepository") as MockBizRepo,
+            patch(f"{MODULE}.BookingRepository") as MockBookingRepo,
+            patch(f"{MODULE}.StaffRepository") as MockStaffRepo,
+        ):
+            _patch_staff_repo(MockStaffRepo, staff)
+            MockStaffRepo.return_value.has_blocked_overlap = AsyncMock(side_effect=blocked_overlap)
+            MockBizRepo.return_value.is_date_blocked = AsyncMock(return_value=False)
+            MockBizRepo.return_value.get_hours_for_day = AsyncMock(return_value=_make_hours(open_h=9, close_h=12))
+            MockBookingRepo.return_value.has_overlap = AsyncMock(return_value=False)
+
+            result = await get_slots(mock_db, mock_redis, service, target, staff_id=staff.id)
+
+        assert [slot["status"] for slot in result] == ["available", "booked", "available"]

@@ -6,15 +6,16 @@ import { useBusinessInfo } from "@/hooks/useBusinessInfo"
 import { salonDayKey, salonTime } from "@/lib/datetime"
 import { cn } from "@/lib/utils"
 import api from "@/lib/api"
-import type { Booking, TimeSlot } from "@/types"
+import type { Booking, Staff, TimeSlot } from "@/types"
 
 interface Props {
   booking: Booking
   open: boolean
+  admin?: boolean
   onClose: () => void
 }
 
-export function RescheduleDialog({ booking, open, onClose }: Props) {
+export function RescheduleDialog({ booking, open, admin = false, onClose }: Props) {
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const { data: business } = useBusinessInfo()
@@ -23,11 +24,13 @@ export function RescheduleDialog({ booking, open, onClose }: Props) {
   // Local state — reset when the dialog opens for a different booking.
   const [date, setDate] = useState("")
   const [slot, setSlot] = useState<TimeSlot | null>(null)
+  const [staffId, setStaffId] = useState(booking.staff_id)
 
   useEffect(() => {
     if (!open) return
     setDate("")
     setSlot(null)
+    setStaffId(booking.staff_id)
   }, [open, booking.id])
 
   // ESC closes; lock body scroll while open. Two well-known a11y niceties
@@ -49,25 +52,36 @@ export function RescheduleDialog({ booking, open, onClose }: Props) {
   // Earliest selectable date is the salon's today, not the browser's.
   const today = salonDayKey(new Date(), tz)
 
+  const { data: staffOptions = [], isLoading: staffLoading } = useQuery<Staff[]>({
+    queryKey: ["staff", booking.service_id],
+    queryFn: async () => (await api.get(`/api/v1/staff/by-service/${booking.service_id}`)).data,
+    enabled: open,
+  })
+
   const { data: slots, isLoading: slotsLoading } = useQuery<TimeSlot[]>({
-    queryKey: ["slots", booking.service_id, date],
+    queryKey: ["slots", booking.service_id, date, staffId],
     queryFn: async () =>
       (await api.get("/api/v1/availability", {
-        params: { service_id: booking.service_id, date },
+        params: { service_id: booking.service_id, date, staff_id: staffId },
       })).data,
-    enabled: open && !!date,
+    enabled: open && !!date && !!staffId,
   })
 
   const rescheduleMutation = useMutation({
     mutationFn: async (newStart: string) => {
+      const path = admin
+        ? `/api/v1/admin/bookings/${booking.id}/reschedule`
+        : `/api/v1/bookings/${booking.id}/reschedule`
       const { data } = await api.post(
-        `/api/v1/bookings/${booking.id}/reschedule`,
-        { start_time: newStart },
+        path,
+        { start_time: newStart, staff_id: staffId },
       )
       return data
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["my-bookings"] })
+      queryClient.invalidateQueries({ queryKey: ["admin-bookings"] })
+      queryClient.invalidateQueries({ queryKey: ["admin-dashboard"] })
       queryClient.invalidateQueries({ queryKey: ["slots"] })
       toast({ title: "Booking rescheduled" })
       onClose()
@@ -112,6 +126,38 @@ export function RescheduleDialog({ booking, open, onClose }: Props) {
 
         {/* body */}
         <div className="p-6 flex flex-col gap-6">
+          <div>
+            <label className="text-[10px] tracking-widest uppercase text-muted-foreground block mb-2">
+              Stylist
+            </label>
+            {staffLoading ? (
+              <div className="border border-border p-4 text-xs text-muted-foreground tracking-widest uppercase">
+                Loading stylists...
+              </div>
+            ) : (
+              <div className="grid sm:grid-cols-2 gap-px bg-border">
+                {(staffOptions.length ? staffOptions : booking.staff ? [booking.staff] : []).map((staff) => {
+                  const active = staffId === staff.id
+                  return (
+                    <button
+                      key={staff.id}
+                      onClick={() => {
+                        setStaffId(staff.id)
+                        setSlot(null)
+                      }}
+                      className={cn(
+                        "bg-background text-left px-4 py-3 transition-colors hover:bg-secondary",
+                        active && "bg-foreground text-background hover:bg-foreground",
+                      )}
+                    >
+                      <p className="text-xs font-medium uppercase tracking-widest">{staff.name}</p>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
           <div>
             <label htmlFor="reschedule-date" className="text-[10px] tracking-widest uppercase text-muted-foreground block mb-2">
               New Date

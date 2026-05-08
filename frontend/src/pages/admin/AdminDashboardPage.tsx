@@ -1,17 +1,16 @@
 import { useMemo } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { addDays, isWithinInterval, parseISO, startOfDay } from "date-fns"
+import { parseISO } from "date-fns"
 import { CalendarDays } from "lucide-react"
 import { useAuth } from "@/context/AuthContext"
 import { useBusinessInfo } from "@/hooks/useBusinessInfo"
 import {
-  isSalonToday,
   salonClockParts,
   salonDateLong,
   salonTime,
 } from "@/lib/datetime"
 import api from "@/lib/api"
-import type { BookingPage } from "@/types"
+import type { AdminDashboard } from "@/types"
 
 function StatCard({ label, value, sub }: { label: string; value: string | number; sub: string }) {
   return (
@@ -43,40 +42,13 @@ export default function AdminDashboardPage() {
     return "Evening"
   }, [tz])
 
-  const { data: confirmedPage, isLoading: loadingConfirmed } = useQuery<BookingPage>({
-    queryKey: ["dashboard", "confirmed"],
-    queryFn: () =>
-      api.get("/api/v1/admin/bookings", { params: { status: "confirmed", limit: 100 } }).then((r) => r.data),
+  const { data: dashboard, isLoading } = useQuery<AdminDashboard>({
+    queryKey: ["admin-dashboard"],
+    queryFn: () => api.get("/api/v1/admin/dashboard").then((r) => r.data),
     staleTime: 30_000,
   })
 
-  const { data: cancelledPage } = useQuery<BookingPage>({
-    queryKey: ["dashboard", "cancelled"],
-    queryFn: () =>
-      api.get("/api/v1/admin/bookings", { params: { status: "cancelled", limit: 1 } }).then((r) => r.data),
-    staleTime: 30_000,
-  })
-
-  const weekEnd = addDays(startOfDay(now), 7)
-
-  const todayBookings = useMemo(() => {
-    if (!confirmedPage) return []
-    return confirmedPage.items
-      .filter((b) => isSalonToday(b.start_time, tz))
-      .sort((a, b) => a.start_time.localeCompare(b.start_time))
-  }, [confirmedPage, tz])
-
-  const thisWeekCount = useMemo(() => {
-    if (!confirmedPage) return 0
-    return confirmedPage.items.filter((b) =>
-      isWithinInterval(parseISO(b.start_time), { start: now, end: weekEnd })
-    ).length
-  }, [confirmedPage])
-
-  const todayRevenue = useMemo(
-    () => todayBookings.reduce((sum, b) => sum + Number(b.service?.price ?? 0), 0),
-    [todayBookings]
-  )
+  const todayBookings = dashboard?.today_schedule ?? []
 
   return (
     <div className="flex flex-col gap-10">
@@ -94,22 +66,22 @@ export default function AdminDashboardPage() {
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-px bg-border">
         <StatCard
           label="Today"
-          value={loadingConfirmed ? "—" : todayBookings.length}
-          sub={`$${todayRevenue.toFixed(2)} in revenue`}
+          value={isLoading ? "—" : dashboard?.today_bookings_count ?? 0}
+          sub={`$${Number(dashboard?.today_revenue ?? 0).toFixed(2)} in revenue`}
         />
         <StatCard
           label="This Week"
-          value={loadingConfirmed ? "—" : thisWeekCount}
+          value={isLoading ? "—" : dashboard?.week_bookings_count ?? 0}
           sub="upcoming appointments"
         />
         <StatCard
           label="Confirmed"
-          value={confirmedPage?.total ?? "—"}
+          value={dashboard?.confirmed_total ?? "—"}
           sub="all-time bookings"
         />
         <StatCard
           label="Cancelled"
-          value={cancelledPage?.total ?? "—"}
+          value={dashboard?.cancelled_total ?? "—"}
           sub="all-time cancellations"
         />
       </div>
@@ -123,7 +95,7 @@ export default function AdminDashboardPage() {
           </p>
         </div>
 
-        {loadingConfirmed ? (
+        {isLoading ? (
           <div className="flex flex-col gap-px bg-border">
             {[1, 2, 3].map((i) => (
               <div key={i} className="h-16 bg-secondary animate-pulse" />
@@ -163,6 +135,7 @@ export default function AdminDashboardPage() {
                     <p className="text-xs text-muted-foreground tracking-wider truncate">
                       {booking.service?.name ?? "—"}
                       {booking.service && ` · ${booking.service.duration_minutes} min`}
+                      {booking.staff && ` · ${booking.staff.name}`}
                     </p>
                   </div>
 

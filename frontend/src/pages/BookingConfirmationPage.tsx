@@ -87,6 +87,7 @@ export default function BookingConfirmationPage() {
       <div className="border border-border">
         {[
           { label: "Service",   value: booking.service?.name ?? "—" },
+          { label: "Stylist",   value: booking.staff?.name ?? "—" },
           { label: "Date",      value: salonDateLong(booking.start_time, tz) },
           { label: "Time",      value: `${salonTime(booking.start_time, tz)}${tzAbbr ? ` ${tzAbbr}` : ""}` },
           { label: "Duration",  value: booking.service ? `${booking.service.duration_minutes} minutes` : "—" },

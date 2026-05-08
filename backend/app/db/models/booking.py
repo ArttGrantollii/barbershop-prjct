@@ -30,11 +30,16 @@ class Booking(Base, TimestampMixin):
     )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     cancellation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Set by the reminder worker after a 24h-before notification fires.
-    # Null means a reminder is still owed (or the worker hasn't reached it).
+    # Set when the reminder worker claims this booking for a send attempt.
+    reminder_attempted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Set only after the notification backend accepts the reminder.
     reminder_sent_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Last terminal reason a reminder attempt did not become a successful send.
+    reminder_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     user: Mapped["User"] = relationship("User", back_populates="bookings")
     service: Mapped["Service"] = relationship("Service", back_populates="bookings")
