@@ -1,6 +1,6 @@
 import logging
 
-from app.notifications.schemas import BookingInfo
+from app.notifications.schemas import AccountActionInfo, BookingInfo
 
 logger = logging.getLogger(__name__)
 
@@ -53,3 +53,21 @@ def send_booking_reminder(info: BookingInfo) -> None:
             info.booking_id,
             when,
         )
+
+
+def send_email_verification(info: AccountActionInfo) -> None:
+    logger.info(
+        "[EMAIL] Verify account | to=%s | expires=%sm | url=%s",
+        info.customer_email,
+        info.expires_minutes,
+        info.action_url,
+    )
+
+
+def send_password_reset(info: AccountActionInfo) -> None:
+    logger.info(
+        "[EMAIL] Password reset | to=%s | expires=%sm | url=%s",
+        info.customer_email,
+        info.expires_minutes,
+        info.action_url,
+    )

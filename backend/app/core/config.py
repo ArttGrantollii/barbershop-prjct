@@ -15,11 +15,14 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    EMAIL_VERIFICATION_TOKEN_HOURS: int = 24
+    PASSWORD_RESET_TOKEN_MINUTES: int = 30
 
     DATABASE_URL: str
     REDIS_URL: str = "redis://localhost:6379"
 
     ALLOWED_ORIGINS: str = "http://localhost:3000"
+    FRONTEND_URL: str = "http://localhost:3000"
 
     NOTIFICATIONS_BACKEND: str = "console"
     AWS_ACCESS_KEY_ID: str = ""

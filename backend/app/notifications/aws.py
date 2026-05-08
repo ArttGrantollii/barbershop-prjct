@@ -1,7 +1,7 @@
 import boto3
 
 from app.core.config import settings
-from app.notifications.schemas import BookingInfo
+from app.notifications.schemas import AccountActionInfo, BookingInfo
 
 
 def _ses_client():
@@ -123,3 +123,35 @@ def send_booking_cancelled(info: BookingInfo) -> None:
             info.customer_phone,
             f"Vendos Salon: Your appointment ({info.booking_id}) has been cancelled.",
         )
+
+
+def send_email_verification(info: AccountActionInfo) -> None:
+    subject = "Verify your Vendos Salon account"
+    html = f"""
+    <h2>Verify your email</h2>
+    <p>Hi {info.customer_name},</p>
+    <p>Confirm this email address so your booking notifications reach the right inbox.</p>
+    <p><a href="{info.action_url}">Verify email</a></p>
+    <p>This link expires in {info.expires_minutes} minutes.</p>
+    """
+    text = (
+        f"Verify your Vendos Salon account:\n{info.action_url}\n"
+        f"This link expires in {info.expires_minutes} minutes."
+    )
+    _send_email(info.customer_email, subject, html, text)
+
+
+def send_password_reset(info: AccountActionInfo) -> None:
+    subject = "Reset your Vendos Salon password"
+    html = f"""
+    <h2>Password reset</h2>
+    <p>Hi {info.customer_name},</p>
+    <p>Use the link below to set a new password.</p>
+    <p><a href="{info.action_url}">Reset password</a></p>
+    <p>This link expires in {info.expires_minutes} minutes. Ignore this email if you did not request it.</p>
+    """
+    text = (
+        f"Reset your Vendos Salon password:\n{info.action_url}\n"
+        f"This link expires in {info.expires_minutes} minutes."
+    )
+    _send_email(info.customer_email, subject, html, text)

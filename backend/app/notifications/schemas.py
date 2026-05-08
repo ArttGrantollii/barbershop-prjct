@@ -13,3 +13,11 @@ class BookingInfo:
     end_time: datetime
     duration_minutes: int
     cancellation_reason: str | None = field(default=None)
+
+
+@dataclass
+class AccountActionInfo:
+    customer_name: str
+    customer_email: str
+    action_url: str
+    expires_minutes: int
