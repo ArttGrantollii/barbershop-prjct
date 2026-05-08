@@ -21,6 +21,7 @@ class Booking(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
     service_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("services.id"))
+    staff_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("staff.id"), index=True)
     start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     end_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     status: Mapped[BookingStatus] = mapped_column(
@@ -37,3 +38,4 @@ class Booking(Base, TimestampMixin):
 
     user: Mapped["User"] = relationship("User", back_populates="bookings")
     service: Mapped["Service"] = relationship("Service", back_populates="bookings")
+    staff: Mapped["Staff"] = relationship("Staff", back_populates="bookings")

@@ -37,7 +37,11 @@ class BookingRepository(BaseRepository[Booking]):
         result = await self.db.execute(
             select(Booking)
             .where(Booking.id == id)
-            .options(selectinload(Booking.service), selectinload(Booking.user))
+            .options(
+                selectinload(Booking.service),
+                selectinload(Booking.user),
+                selectinload(Booking.staff),
+            )
         )
         return result.scalars().one_or_none()
 
@@ -58,8 +62,15 @@ class BookingRepository(BaseRepository[Booking]):
         self,
         start_time: datetime,
         end_time: datetime,
+        staff_id: uuid.UUID | None = None,
         exclude_id: uuid.UUID | None = None,
     ) -> bool:
+        """True if any confirmed booking overlaps the [start, end) range.
+        When `staff_id` is provided, the check is scoped to that staff —
+        which is the right semantics post-Phase-5: two confirmed bookings
+        may overlap iff they're with different staff. With `staff_id=None`
+        (legacy callers), the check spans the whole shop (single-chair
+        semantics)."""
         q = select(Booking).where(
             and_(
                 Booking.status == BookingStatus.CONFIRMED,
@@ -67,6 +78,8 @@ class BookingRepository(BaseRepository[Booking]):
                 Booking.end_time > start_time,
             )
         )
+        if staff_id is not None:
+            q = q.where(Booking.staff_id == staff_id)
         if exclude_id is not None:
             q = q.where(Booking.id != exclude_id)
         result = await self.db.execute(q)
@@ -76,7 +89,7 @@ class BookingRepository(BaseRepository[Booking]):
         result = await self.db.execute(
             select(Booking)
             .where(Booking.user_id == user_id)
-            .options(selectinload(Booking.service))
+            .options(selectinload(Booking.service), selectinload(Booking.staff))
             .order_by(Booking.start_time.desc())
         )
         return list(result.scalars().all())
@@ -161,6 +174,14 @@ class BookingRepository(BaseRepository[Booking]):
         )
         return result.scalar_one()
 
+    async def count_for_staff(self, staff_id: uuid.UUID) -> int:
+        result = await self.db.execute(
+            select(func.count())
+            .select_from(Booking)
+            .where(Booking.staff_id == staff_id)
+        )
+        return result.scalar_one()
+
     async def get_all_with_details(
         self,
         limit: int = 50,
@@ -173,7 +194,11 @@ class BookingRepository(BaseRepository[Booking]):
         clauses = self._admin_filter_clauses(status, q, start_from, start_to)
         stmt = (
             select(Booking)
-            .options(selectinload(Booking.user), selectinload(Booking.service))
+            .options(
+                selectinload(Booking.user),
+                selectinload(Booking.service),
+                selectinload(Booking.staff),
+            )
             .order_by(Booking.start_time.desc())
             .limit(limit)
             .offset(offset)
@@ -189,6 +214,7 @@ class BookingRepository(BaseRepository[Booking]):
         self,
         user_id: uuid.UUID,
         service_id: uuid.UUID,
+        staff_id: uuid.UUID,
         start_time: datetime,
         end_time: datetime,
         notes: str | None = None,
@@ -197,6 +223,7 @@ class BookingRepository(BaseRepository[Booking]):
             Booking(
                 user_id=user_id,
                 service_id=service_id,
+                staff_id=staff_id,
                 start_time=start_time,
                 end_time=end_time,
                 notes=notes,

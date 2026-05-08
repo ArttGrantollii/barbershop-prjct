@@ -8,6 +8,7 @@ import pytest
 
 from app.db.models.booking import Booking, BookingStatus
 from app.db.models.service import Service
+from app.db.models.staff import Staff
 from app.db.models.user import User, UserRole
 
 
@@ -37,6 +38,21 @@ def service_id() -> uuid.UUID:
 @pytest.fixture
 def user_id() -> uuid.UUID:
     return uuid.uuid4()
+
+
+@pytest.fixture
+def staff_id() -> uuid.UUID:
+    return uuid.uuid4()
+
+
+@pytest.fixture
+def mock_staff(staff_id: uuid.UUID) -> MagicMock:
+    s = MagicMock(spec=Staff)
+    s.id = staff_id
+    s.name = "Main Chair"
+    s.is_active = True
+    s.display_order = 0
+    return s
 
 
 @pytest.fixture
@@ -70,12 +86,18 @@ def future_start() -> datetime:
 
 
 @pytest.fixture
-def mock_booking(user_id: uuid.UUID, service_id: uuid.UUID, future_start: datetime) -> MagicMock:
+def mock_booking(
+    user_id: uuid.UUID,
+    service_id: uuid.UUID,
+    staff_id: uuid.UUID,
+    future_start: datetime,
+) -> MagicMock:
     from datetime import timedelta
     booking = MagicMock(spec=Booking)
     booking.id = uuid.uuid4()
     booking.user_id = user_id
     booking.service_id = service_id
+    booking.staff_id = staff_id
     booking.start_time = future_start
     booking.end_time = future_start + timedelta(minutes=30)
     booking.status = BookingStatus.CONFIRMED

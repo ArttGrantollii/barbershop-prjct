@@ -11,6 +11,7 @@ from app.db.redis import get_redis
 from app.db.repositories.booking_repository import BookingRepository
 from app.db.repositories.business_repository import BusinessRepository
 from app.db.repositories.service_repository import ServiceRepository
+from app.db.repositories.staff_repository import StaffRepository
 from app.db.session import get_db
 from app.schemas.booking import BookingCancelRequest, BookingDetailResponse, BookingPage
 from app.schemas.business import (
@@ -20,6 +21,13 @@ from app.schemas.business import (
     BusinessHoursUpdate,
 )
 from app.schemas.service import ServiceCreate, ServiceResponse, ServiceUpdate
+from app.schemas.staff import (
+    StaffCreate,
+    StaffResponse,
+    StaffServicesUpdate,
+    StaffUpdate,
+    StaffWithServicesResponse,
+)
 from app.services.booking_service import cancel_booking
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -138,6 +146,106 @@ async def remove_blocked_date(
 ):
     if not await BusinessRepository(db).delete_blocked_date(blocked_date_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Blocked date not found")
+
+
+# ── Staff ─────────────────────────────────────────────────────────────────────
+
+
+def _staff_payload(staff) -> StaffWithServicesResponse:
+    """Flatten the relationship into the wire shape — `service_ids` instead
+    of nested `services` so the admin UI can drive checkbox state directly."""
+    return StaffWithServicesResponse(
+        id=staff.id,
+        name=staff.name,
+        phone=staff.phone,
+        photo_url=staff.photo_url,
+        is_active=staff.is_active,
+        display_order=staff.display_order,
+        service_ids=[s.id for s in (staff.services or [])],
+    )
+
+
+@router.get("/staff", response_model=list[StaffWithServicesResponse])
+async def list_staff(db: AsyncSession = Depends(get_db), _: User = Depends(get_current_admin)):
+    rows = await StaffRepository(db).get_all_with_services()
+    return [_staff_payload(s) for s in rows]
+
+
+@router.post("/staff", response_model=StaffWithServicesResponse, status_code=status.HTTP_201_CREATED)
+async def create_staff(
+    body: StaffCreate,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    repo = StaffRepository(db)
+    staff = await repo.create(
+        name=body.name,
+        phone=body.phone,
+        photo_url=body.photo_url,
+        display_order=body.display_order,
+    )
+    if body.service_ids:
+        staff = await repo.set_services(staff, body.service_ids)
+    else:
+        # Re-fetch with the (empty) services collection populated so the
+        # response payload is consistent shape-wise with the assignment case.
+        staff = await repo.get_with_services(staff.id)
+    return _staff_payload(staff)
+
+
+@router.patch("/staff/{staff_id}", response_model=StaffWithServicesResponse)
+async def update_staff(
+    staff_id: uuid.UUID,
+    body: StaffUpdate,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    repo = StaffRepository(db)
+    staff = await repo.get_with_services(staff_id)
+    if not staff:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Staff not found")
+    patch = body.model_dump(exclude_unset=True)
+    if patch:
+        staff = await repo.update(staff, **patch)
+    return _staff_payload(staff)
+
+
+@router.put("/staff/{staff_id}/services", response_model=StaffWithServicesResponse)
+async def set_staff_services(
+    staff_id: uuid.UUID,
+    body: StaffServicesUpdate,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    repo = StaffRepository(db)
+    staff = await repo.get_with_services(staff_id)
+    if not staff:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Staff not found")
+    staff = await repo.set_services(staff, body.service_ids)
+    return _staff_payload(staff)
+
+
+@router.delete("/staff/{staff_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_staff(
+    staff_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    """Same pattern as service delete: refuse a hard delete when bookings
+    reference the staff. Admins can deactivate (PATCH is_active=false) to
+    keep them out of new bookings without losing history."""
+    booking_count = await BookingRepository(db).count_for_staff(staff_id)
+    if booking_count > 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Cannot delete this stylist: {booking_count} booking"
+                f"{'s' if booking_count != 1 else ''} reference them. "
+                "Deactivate instead to remove them from new bookings while preserving history."
+            ),
+        )
+    if not await StaffRepository(db).delete(staff_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Staff not found")
 
 
 # ── Bookings ──────────────────────────────────────────────────────────────────

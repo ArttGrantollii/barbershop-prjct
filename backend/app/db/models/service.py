@@ -1,10 +1,14 @@
 import uuid
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
+
+if TYPE_CHECKING:
+    from app.db.models.staff import Staff
 
 
 class Service(Base, TimestampMixin):
@@ -18,3 +22,6 @@ class Service(Base, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     bookings: Mapped[list["Booking"]] = relationship("Booking", back_populates="service")
+    staff_members: Mapped[list["Staff"]] = relationship(
+        secondary="service_staff", back_populates="services"
+    )

@@ -25,6 +25,20 @@ def _make_service(duration_minutes: int = 60) -> MagicMock:
     return svc
 
 
+def _make_staff() -> MagicMock:
+    s = MagicMock()
+    s.id = uuid.uuid4()
+    s.name = "Main Chair"
+    s.is_active = True
+    s.display_order = 0
+    return s
+
+
+def _patch_staff_repo(MockStaffRepo, staff: MagicMock) -> None:
+    """Configure StaffRepository so get_slots finds `staff` for any service."""
+    MockStaffRepo.return_value.get_active_for_service = AsyncMock(return_value=[staff])
+
+
 class TestGetSlots:
     async def test_blocked_date_returns_empty(self, mock_db, mock_redis):
         target = date(2026, 6, 15)
@@ -69,7 +83,9 @@ class TestGetSlots:
         with (
             patch(f"{MODULE}.BusinessRepository") as MockBizRepo,
             patch(f"{MODULE}.BookingRepository") as MockBookingRepo,
+            patch(f"{MODULE}.StaffRepository") as MockStaffRepo,
         ):
+            _patch_staff_repo(MockStaffRepo, _make_staff())
             MockBizRepo.return_value.is_date_blocked = AsyncMock(return_value=False)
             MockBizRepo.return_value.get_hours_for_day = AsyncMock(
                 return_value=_make_hours(open_h=9, close_h=18)
@@ -90,7 +106,9 @@ class TestGetSlots:
         with (
             patch(f"{MODULE}.BusinessRepository") as MockBizRepo,
             patch(f"{MODULE}.BookingRepository") as MockBookingRepo,
+            patch(f"{MODULE}.StaffRepository") as MockStaffRepo,
         ):
+            _patch_staff_repo(MockStaffRepo, _make_staff())
             MockBizRepo.return_value.is_date_blocked = AsyncMock(return_value=False)
             MockBizRepo.return_value.get_hours_for_day = AsyncMock(
                 return_value=_make_hours(open_h=0, close_h=23)
@@ -111,7 +129,11 @@ class TestGetSlots:
         # All Redis lookups return a holder → all slots are "held".
         mock_redis.get.return_value = str(uuid.uuid4())
 
-        with patch(f"{MODULE}.BusinessRepository") as MockBizRepo:
+        with (
+            patch(f"{MODULE}.BusinessRepository") as MockBizRepo,
+            patch(f"{MODULE}.StaffRepository") as MockStaffRepo,
+        ):
+            _patch_staff_repo(MockStaffRepo, _make_staff())
             MockBizRepo.return_value.is_date_blocked = AsyncMock(return_value=False)
             MockBizRepo.return_value.get_hours_for_day = AsyncMock(
                 return_value=_make_hours(open_h=9, close_h=18)
@@ -130,7 +152,9 @@ class TestGetSlots:
         with (
             patch(f"{MODULE}.BusinessRepository") as MockBizRepo,
             patch(f"{MODULE}.BookingRepository") as MockBookingRepo,
+            patch(f"{MODULE}.StaffRepository") as MockStaffRepo,
         ):
+            _patch_staff_repo(MockStaffRepo, _make_staff())
             MockBizRepo.return_value.is_date_blocked = AsyncMock(return_value=False)
             MockBizRepo.return_value.get_hours_for_day = AsyncMock(
                 return_value=_make_hours(open_h=9, close_h=18)
@@ -167,7 +191,9 @@ class TestGetSlots:
         with (
             patch(f"{MODULE}.BusinessRepository") as MockBizRepo,
             patch(f"{MODULE}.BookingRepository") as MockBookingRepo,
+            patch(f"{MODULE}.StaffRepository") as MockStaffRepo,
         ):
+            _patch_staff_repo(MockStaffRepo, _make_staff())
             MockBizRepo.return_value.is_date_blocked = AsyncMock(return_value=False)
             MockBizRepo.return_value.get_hours_for_day = AsyncMock(
                 return_value=_make_hours(open_h=9, close_h=18)
@@ -191,7 +217,9 @@ class TestGetSlots:
         with (
             patch(f"{MODULE}.BusinessRepository") as MockBizRepo,
             patch(f"{MODULE}.BookingRepository") as MockBookingRepo,
+            patch(f"{MODULE}.StaffRepository") as MockStaffRepo,
         ):
+            _patch_staff_repo(MockStaffRepo, _make_staff())
             MockBizRepo.return_value.is_date_blocked = AsyncMock(return_value=False)
             MockBizRepo.return_value.get_hours_for_day = AsyncMock(
                 return_value=_make_hours(open_h=9, close_h=11)

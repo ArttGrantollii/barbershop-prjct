@@ -21,6 +21,7 @@ router = APIRouter(prefix="/availability", tags=["availability"])
 async def get_availability(
     slot_date: Annotated[date, Query(alias="date")],
     service_id: UUID,
+    staff_id: UUID | None = None,
     db: AsyncSession = Depends(get_db),
     redis=Depends(get_redis),
     current_user: User | None = Depends(get_optional_user),
@@ -28,7 +29,14 @@ async def get_availability(
     service = await ServiceRepository(db).get_by_id(service_id)
     if not service or not service.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found")
-    return await get_slots(db, redis, service, slot_date, user_id=current_user.id if current_user else None)
+    return await get_slots(
+        db,
+        redis,
+        service,
+        slot_date,
+        user_id=current_user.id if current_user else None,
+        staff_id=staff_id,
+    )
 
 
 @router.post("/hold", response_model=HoldResponse)
@@ -38,13 +46,18 @@ async def hold(
     redis=Depends(get_redis),
     current_user: User = Depends(get_current_customer),
 ) -> dict:
-    return await hold_slot(db, redis, current_user.id, body.service_id, body.start_time)
+    return await hold_slot(
+        db, redis, current_user.id, body.service_id, body.start_time, staff_id=body.staff_id,
+    )
 
 
 @router.delete("/hold", status_code=status.HTTP_204_NO_CONTENT)
 async def release(
     body: ReleaseRequest,
+    db: AsyncSession = Depends(get_db),
     redis=Depends(get_redis),
     current_user: User = Depends(get_current_customer),
 ) -> None:
-    await release_hold(redis, current_user.id, body.service_id, body.start_time)
+    await release_hold(
+        db, redis, current_user.id, body.service_id, body.start_time, staff_id=body.staff_id,
+    )

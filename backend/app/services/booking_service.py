@@ -14,6 +14,7 @@ from app.db.models.booking import Booking, BookingStatus
 from app.db.repositories.booking_repository import BookingRepository
 from app.db.repositories.business_repository import BusinessRepository
 from app.db.repositories.service_repository import ServiceRepository
+from app.db.repositories.staff_repository import StaffRepository
 from app.db.repositories.user_repository import UserRepository
 from app.notifications.schemas import BookingInfo
 from app.notifications.service import notify_booking_cancelled, notify_booking_confirmed
@@ -29,6 +30,64 @@ def _utc(dt: datetime) -> datetime:
 def _salon_date(dt: datetime) -> date:
     """Return the calendar date of `dt` as observed in the salon's local timezone."""
     return _utc(dt).astimezone(ZoneInfo(settings.SALON_TIMEZONE)).date()
+
+
+async def _resolve_staff_id(
+    db: AsyncSession,
+    redis: Redis,
+    booking_repo: BookingRepository,
+    service_id: UUID,
+    start_time: datetime,
+    end_time: datetime,
+    preferred_staff_id: UUID | None = None,
+) -> UUID:
+    """Pick the staff member to assign to this hold/booking.
+
+    With `preferred_staff_id` set: validate that staff offers the service and
+    is free at the requested time, return them. Without: walk the active
+    staff who offer the service in display order and return the first free
+    one. Raises 4xx HTTPException when no staff fits.
+
+    Honoring caller preference rather than blindly auto-picking matters once
+    the customer-facing "pick your stylist" UI ships — the same code path
+    serves both modes.
+    """
+    staff_repo = StaffRepository(db)
+
+    if preferred_staff_id is not None:
+        if not await staff_repo.staff_offers_service(preferred_staff_id, service_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="That stylist does not offer this service.",
+            )
+        if await redis.get(slot_hold_key(preferred_staff_id, start_time)):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="That stylist is currently held at this time.",
+            )
+        if await booking_repo.has_overlap(start_time, end_time, staff_id=preferred_staff_id):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="That stylist is already booked at this time.",
+            )
+        return preferred_staff_id
+
+    eligible = await staff_repo.get_active_for_service(service_id)
+    if not eligible:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No stylists are configured for this service.",
+        )
+    for staff in eligible:
+        if await redis.get(slot_hold_key(staff.id, start_time)):
+            continue
+        if await booking_repo.has_overlap(start_time, end_time, staff_id=staff.id):
+            continue
+        return staff.id
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="No stylist is available at this time.",
+    )
 
 
 def _check_min_lead(start_time: datetime) -> None:
@@ -64,6 +123,7 @@ async def hold_slot(
     user_id: UUID,
     service_id: UUID,
     start_time: datetime,
+    staff_id: UUID | None = None,
 ) -> dict:
     start_time = _utc(start_time)
     _check_min_lead(start_time)
@@ -73,7 +133,6 @@ async def hold_slot(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found")
 
     end_time = start_time + timedelta(minutes=service.duration_minutes)
-    key = slot_hold_key(service_id, start_time)
 
     # Per-user cooldown: prevent immediately rebooking a slot the user just cancelled.
     cooldown_key = slot_cooldown_key(user_id, start_time)
@@ -87,55 +146,100 @@ async def hold_slot(
 
     # Same-day single-booking rule: enforce here too so the user fails fast at
     # hold time instead of after filling out the confirm step.
-    if await BookingRepository(db).count_confirmed_for_user_on_date(user_id, _salon_date(start_time)) > 0:
+    booking_repo = BookingRepository(db)
+    if await booking_repo.count_confirmed_for_user_on_date(user_id, _salon_date(start_time)) > 0:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="You already have a booking on this day. Please cancel it before holding another slot.",
         )
 
-    # Check DB first so we give a clear error if the slot is already confirmed.
-    if await BookingRepository(db).has_overlap(start_time, end_time):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Slot is already booked")
+    # Resolve the stylist. Concurrent callers can pick the same one between
+    # the resolver's check and our SET NX — re-resolve on failure so the
+    # second caller still gets a stylist if any others are free.
+    last_exc: HTTPException | None = None
+    for _ in range(3):
+        resolved_staff_id = await _resolve_staff_id(
+            db, redis, booking_repo, service_id, start_time, end_time, preferred_staff_id=staff_id,
+        )
+        key = slot_hold_key(resolved_staff_id, start_time)
+        acquired = await redis.set(key, str(user_id), nx=True, ex=settings.SLOT_HOLD_TTL_SECONDS)
+        if acquired:
+            break
+        last_exc = HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Slot is already held",
+        )
+        if staff_id is not None:
+            # Caller asked for a specific stylist; don't substitute.
+            raise last_exc
+    else:
+        raise last_exc or HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Could not reserve a stylist — please try again.",
+        )
 
-    # Atomic SET NX — only succeeds if the key doesn't exist yet, eliminating the
-    # check-then-set race condition in the original code.
-    acquired = await redis.set(key, str(user_id), nx=True, ex=settings.SLOT_HOLD_TTL_SECONDS)
-    if not acquired:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Slot is already held")
-
-    logger.info("slot_held", user_id=str(user_id), service_id=str(service_id), start=start_time.isoformat())
+    logger.info(
+        "slot_held",
+        user_id=str(user_id),
+        service_id=str(service_id),
+        staff_id=str(resolved_staff_id),
+        start=start_time.isoformat(),
+    )
 
     room = start_time.date().isoformat()
     await manager.broadcast(room, {
         "type": "slot_update",
         "start_time": start_time.isoformat(),
+        "staff_id": str(resolved_staff_id),
         "status": "held",
     })
 
     return {
         "start_time": start_time,
         "end_time": end_time,
+        "staff_id": resolved_staff_id,
         "expires_in_seconds": settings.SLOT_HOLD_TTL_SECONDS,
     }
 
 
 async def release_hold(
+    db: AsyncSession,
     redis: Redis,
     user_id: UUID,
     service_id: UUID,
     start_time: datetime,
+    staff_id: UUID | None = None,
 ) -> None:
+    """Release the user's hold for this service+time.
+
+    Hold keys are per-staff. When the caller knows which stylist the hold
+    was placed against (the hold response includes `staff_id`), this is a
+    single key lookup. When they don't — i.e. the legacy frontend that
+    didn't track the resolved staff — we walk the eligible staff and
+    release whichever key is owned by this user. Either way the operation
+    is idempotent: callers always get 204 on success."""
     start_time = _utc(start_time)
-    key = slot_hold_key(service_id, start_time)
-    holder = await redis.get(key)
-    if holder == str(user_id):
-        await redis.delete(key)
-        room = start_time.date().isoformat()
-        await manager.broadcast(room, {
-            "type": "slot_update",
-            "start_time": start_time.isoformat(),
-            "status": "available",
-        })
+
+    if staff_id is not None:
+        candidate_ids = [staff_id]
+    else:
+        staff_repo = StaffRepository(db)
+        eligible = await staff_repo.get_active_for_service(service_id)
+        candidate_ids = [s.id for s in eligible]
+
+    for sid in candidate_ids:
+        key = slot_hold_key(sid, start_time)
+        holder = await redis.get(key)
+        if holder == str(user_id):
+            await redis.delete(key)
+            room = start_time.date().isoformat()
+            await manager.broadcast(room, {
+                "type": "slot_update",
+                "start_time": start_time.isoformat(),
+                "staff_id": str(sid),
+                "status": "available",
+            })
+            return  # one hold per (user, service, time); first match wins
 
 
 async def create_booking(
@@ -145,6 +249,7 @@ async def create_booking(
     service_id: UUID,
     start_time: datetime,
     notes: str | None = None,
+    staff_id: UUID | None = None,
 ) -> Booking:
     start_time = _utc(start_time)
 
@@ -160,7 +265,8 @@ async def create_booking(
             detail="This date is not available for bookings.",
         )
 
-    existing = await BookingRepository(db).count_confirmed_for_user_on_date(user_id, salon_day)
+    booking_repo = BookingRepository(db)
+    existing = await booking_repo.count_confirmed_for_user_on_date(user_id, salon_day)
     if existing > 0:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -189,22 +295,54 @@ async def create_booking(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found")
 
     end_time = start_time + timedelta(minutes=service.duration_minutes)
-    key = slot_hold_key(service_id, start_time)
-    holder = await redis.get(key)
 
-    if holder and holder != str(user_id):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Slot is held by another user")
+    # Pick the stylist. If the caller pre-held a slot, that hold's key tells us
+    # which staff was assigned — we look for a hold owned by this user across
+    # the eligible staff and prefer that one. Otherwise (no prior hold or the
+    # caller wants to override) the resolver auto-picks.
+    resolved_staff_id: UUID | None = staff_id
+    if resolved_staff_id is None:
+        staff_repo = StaffRepository(db)
+        eligible = await staff_repo.get_active_for_service(service_id)
+        for staff in eligible:
+            holder = await redis.get(slot_hold_key(staff.id, start_time))
+            if holder == str(user_id):
+                resolved_staff_id = staff.id
+                break
 
-    # Fast-fail before the insert — the DB exclusion constraint is the authoritative
-    # guard, but this gives a clearer error message in the common case.
-    if await BookingRepository(db).has_overlap(start_time, end_time):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Slot is no longer available")
+    if resolved_staff_id is None:
+        # No pre-held slot — let the resolver pick a free stylist.
+        resolved_staff_id = await _resolve_staff_id(
+            db, redis, booking_repo, service_id, start_time, end_time,
+            preferred_staff_id=None,
+        )
+    else:
+        # Caller-specified or hold-derived staff_id: still validate the
+        # combination (offers service, not booked under us). We don't check
+        # "held" here because the user's own hold is fine to consume.
+        staff_repo = StaffRepository(db)
+        if not await staff_repo.staff_offers_service(resolved_staff_id, service_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="That stylist does not offer this service.",
+            )
+        held_by = await redis.get(slot_hold_key(resolved_staff_id, start_time))
+        if held_by and held_by != str(user_id):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="That stylist is currently held by another customer.",
+            )
+        if await booking_repo.has_overlap(start_time, end_time, staff_id=resolved_staff_id):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="That stylist is no longer available at this time.",
+            )
 
-    repo = BookingRepository(db)
     try:
-        raw = await repo.create_booking(
+        raw = await booking_repo.create_booking(
             user_id=user_id,
             service_id=service_id,
+            staff_id=resolved_staff_id,
             start_time=start_time,
             end_time=end_time,
             notes=notes,
@@ -215,15 +353,18 @@ async def create_booking(
 
     # Re-fetch with eagerly loaded relationships so FastAPI can serialize the response
     # without hitting the MissingGreenlet error from lazy-loading inside the ASGI stack.
-    booking = await repo.get_with_details(raw.id)
+    booking = await booking_repo.get_with_details(raw.id)
 
-    await redis.delete(key)
+    # Consume our hold (if any). Whichever staff we landed on, that's the
+    # hold key to free.
+    await redis.delete(slot_hold_key(resolved_staff_id, start_time))
 
     logger.info(
         "booking_created",
         booking_id=str(booking.id),
         user_id=str(user_id),
         service_id=str(service_id),
+        staff_id=str(resolved_staff_id),
         start=start_time.isoformat(),
     )
 
@@ -231,6 +372,7 @@ async def create_booking(
     await manager.broadcast(room, {
         "type": "slot_update",
         "start_time": start_time.isoformat(),
+        "staff_id": str(resolved_staff_id),
         "status": "booked",
     })
 
@@ -259,6 +401,7 @@ async def reschedule_booking(
     user_id: UUID,
     new_start_time: datetime,
     is_admin: bool = False,
+    new_staff_id: UUID | None = None,
 ) -> Booking:
     """Atomically move a confirmed booking to a new start_time. Avoids the
     cancel-then-rebook flow so the user isn't punished by the cooldown for a
@@ -324,17 +467,32 @@ async def reschedule_booking(
             detail="You already have another booking on this day. Cancel it first or pick a different day.",
         )
 
+    # Default to keeping the same stylist. Callers may override (e.g. an
+    # admin moving a booking onto a different chair) by passing new_staff_id.
+    target_staff_id = new_staff_id or booking.staff_id
+    if new_staff_id is not None:
+        staff_repo = StaffRepository(db)
+        if not await staff_repo.staff_offers_service(new_staff_id, booking.service_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="That stylist does not offer this service.",
+            )
+
     # Quick-fail before the UPDATE — friendlier 409 than the integrity error
-    # we'd otherwise get from the EXCLUDE constraint at commit time.
-    if await repo.has_overlap(new_start_time, new_end_time, exclude_id=booking_id):
+    # we'd otherwise get from the EXCLUDE constraint at commit time. Scope
+    # the overlap check to the target stylist so two stylists can be busy at
+    # the same time without colliding.
+    if await repo.has_overlap(
+        new_start_time, new_end_time, staff_id=target_staff_id, exclude_id=booking_id,
+    ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="The new time conflicts with another booking.",
         )
 
-    # If someone is currently *holding* the new slot (other than this booking's
-    # owner), respect that hold — same semantics as create_booking.
-    hold_key = slot_hold_key(booking.service_id, new_start_time)
+    # If someone is currently *holding* the new slot for the target stylist
+    # (other than this booking's owner), respect that hold.
+    hold_key = slot_hold_key(target_staff_id, new_start_time)
     holder = await redis.get(hold_key)
     if holder and holder != str(booking.user_id):
         raise HTTPException(
@@ -346,6 +504,8 @@ async def reschedule_booking(
 
     booking.start_time = new_start_time
     booking.end_time = new_end_time
+    if target_staff_id != booking.staff_id:
+        booking.staff_id = target_staff_id
     try:
         await db.commit()
     except IntegrityError:

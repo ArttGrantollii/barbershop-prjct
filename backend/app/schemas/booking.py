@@ -11,6 +11,7 @@ class BookingCreate(BaseModel):
     service_id: uuid.UUID
     start_time: datetime
     notes: str | None = None
+    staff_id: uuid.UUID | None = None
 
 
 class BookingCancelRequest(BaseModel):
@@ -19,6 +20,7 @@ class BookingCancelRequest(BaseModel):
 
 class BookingRescheduleRequest(BaseModel):
     start_time: datetime
+    staff_id: uuid.UUID | None = None
 
 
 class ServiceSummary(BaseModel):
@@ -39,12 +41,21 @@ class UserSummary(BaseModel):
     phone: str | None
 
 
+class StaffSummary(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: uuid.UUID
+    name: str
+    photo_url: str | None = None
+
+
 class BookingResponse(BaseModel):
     model_config = {"from_attributes": True}
 
     id: uuid.UUID
     user_id: uuid.UUID
     service_id: uuid.UUID
+    staff_id: uuid.UUID
     start_time: datetime
     end_time: datetime
     status: BookingStatus
@@ -56,6 +67,7 @@ class BookingResponse(BaseModel):
 class BookingDetailResponse(BookingResponse):
     service: ServiceSummary | None = None
     user: UserSummary | None = None
+    staff: StaffSummary | None = None
 
 
 class BookingPage(BaseModel):

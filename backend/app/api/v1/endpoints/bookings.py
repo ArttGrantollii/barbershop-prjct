@@ -34,7 +34,10 @@ async def book(
     redis=Depends(get_redis),
     current_user: User = Depends(get_current_customer),
 ):
-    return await create_booking(db, redis, current_user.id, body.service_id, body.start_time, body.notes)
+    return await create_booking(
+        db, redis, current_user.id, body.service_id, body.start_time, body.notes,
+        staff_id=body.staff_id,
+    )
 
 
 @router.get("/{booking_id}", response_model=BookingDetailResponse)
@@ -75,5 +78,6 @@ async def reschedule(
     current_user: User = Depends(get_current_customer),
 ):
     return await reschedule_booking(
-        db, redis, booking_id, current_user.id, body.start_time, is_admin=False,
+        db, redis, booking_id, current_user.id, body.start_time,
+        is_admin=False, new_staff_id=body.staff_id,
     )
