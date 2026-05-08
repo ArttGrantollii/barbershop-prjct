@@ -9,6 +9,9 @@ import { PageTransition } from "@/components/ui/PageTransition"
 import HomePage from "@/pages/HomePage"
 import LoginPage from "@/pages/LoginPage"
 import RegisterPage from "@/pages/RegisterPage"
+import ForgotPasswordPage from "@/pages/ForgotPasswordPage"
+import ResetPasswordPage from "@/pages/ResetPasswordPage"
+import VerifyEmailPage from "@/pages/VerifyEmailPage"
 import BookPage from "@/pages/BookPage"
 import BookingConfirmationPage from "@/pages/BookingConfirmationPage"
 import MyBookingsPage from "@/pages/MyBookingsPage"
@@ -30,6 +33,9 @@ function AnimatedRoutes() {
         <Route path="/" element={<PageTransition><HomePage /></PageTransition>} />
         <Route path="/login" element={<PageTransition><LoginPage /></PageTransition>} />
         <Route path="/register" element={<PageTransition><RegisterPage /></PageTransition>} />
+        <Route path="/forgot-password" element={<PageTransition><ForgotPasswordPage /></PageTransition>} />
+        <Route path="/reset-password" element={<PageTransition><ResetPasswordPage /></PageTransition>} />
+        <Route path="/verify-email" element={<PageTransition><VerifyEmailPage /></PageTransition>} />
         <Route
           path="/book"
           element={<ProtectedRoute customerOnly><PageTransition><BookPage /></PageTransition></ProtectedRoute>}

@@ -26,12 +26,24 @@ from app.db.models.user import User
 from app.db.redis import get_redis
 from app.db.repositories.user_repository import UserRepository
 from app.db.session import get_db
-from app.schemas.auth import RefreshTokenRequest, TokenResponse
+from app.schemas.auth import (
+    PasswordResetConfirm,
+    PasswordResetRequest,
+    RefreshTokenRequest,
+    TokenRequest,
+    TokenResponse,
+)
 from app.schemas.user import (
     PasswordChangeRequest,
     UserCreate,
     UserResponse,
     UserUpdate,
+)
+from app.services.account_service import (
+    request_password_reset,
+    reset_password,
+    send_email_verification,
+    verify_email,
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -54,8 +66,51 @@ async def register(
         phone=body.phone,
         hashed_password=get_password_hash(body.password),
     )
+    await send_email_verification(db, user)
     logger.info("user_registered", user_id=str(user.id), email=body.email)
     return user
+
+
+@router.post("/resend-verification", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("3/minute")
+async def resend_verification(
+    request: Request,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    if current_user.is_email_verified:
+        return
+    await send_email_verification(db, current_user)
+
+
+@router.post("/verify-email", response_model=UserResponse)
+@limiter.limit("10/minute")
+async def confirm_email(
+    request: Request,
+    body: TokenRequest,
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    return await verify_email(db, body.token)
+
+
+@router.post("/forgot-password", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("3/minute")
+async def forgot_password(
+    request: Request,
+    body: PasswordResetRequest,
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    await request_password_reset(db, body.email)
+
+
+@router.post("/reset-password", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("5/minute")
+async def confirm_password_reset(
+    request: Request,
+    body: PasswordResetConfirm,
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    await reset_password(db, body.token, body.new_password)
 
 
 @router.post("/login", response_model=TokenResponse)

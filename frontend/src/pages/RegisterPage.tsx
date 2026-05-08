@@ -25,6 +25,7 @@ export default function RegisterPage() {
     setLoading(true)
     try {
       await register(form.name, form.email, form.password, form.phone || undefined)
+      toast({ title: "Account created", description: "Check your email for a verification link." })
       navigate("/", { replace: true })
     } catch (err: any) {
       if (!err.response) {

@@ -92,4 +92,5 @@ class UserResponse(BaseModel):
     phone: str | None
     role: UserRole
     is_active: bool
+    is_email_verified: bool
     created_at: datetime

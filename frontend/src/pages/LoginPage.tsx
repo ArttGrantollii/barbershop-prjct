@@ -80,6 +80,11 @@ export default function LoginPage() {
                 placeholder="••••••••"
               />
             </div>
+            <div className="px-5 py-3 border-b border-border text-right">
+              <Link to="/forgot-password" className="text-[10px] tracking-widest uppercase text-muted-foreground hover:text-foreground transition-colors">
+                Forgot password?
+              </Link>
+            </div>
             <button
               type="submit"
               disabled={loading}
