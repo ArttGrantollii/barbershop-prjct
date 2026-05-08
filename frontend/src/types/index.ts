@@ -153,3 +153,14 @@ export interface WaitlistEntry {
   user: UserSummary | null
   staff: StaffSummary | null
 }
+
+export interface BookingAuditEvent {
+  id: string
+  booking_id: string
+  actor_id: string | null
+  actor_role: "customer" | "admin" | "system"
+  action: string
+  previous_values: Record<string, unknown> | null
+  new_values: Record<string, unknown> | null
+  created_at: string
+}

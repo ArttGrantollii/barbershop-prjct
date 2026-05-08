@@ -20,6 +20,12 @@ from app.services.booking_service import (
 MODULE = "app.services.booking_service"
 
 
+@pytest.fixture(autouse=True)
+def mock_audit_recorder():
+    with patch(f"{MODULE}.record_booking_audit", new_callable=AsyncMock) as recorder:
+        yield recorder
+
+
 # ---------------------------------------------------------------------------
 # Mock helpers — module-level so every test class can use them
 # ---------------------------------------------------------------------------
@@ -228,7 +234,8 @@ class TestHoldSlot:
 
 class TestCreateBooking:
     async def test_success(
-        self, mock_db, mock_redis, mock_service, mock_user, mock_booking, mock_staff, user_id, future_start
+        self, mock_db, mock_redis, mock_service, mock_user, mock_booking, mock_staff, user_id, future_start,
+        mock_audit_recorder
     ):
         mock_redis.get.return_value = None  # No hold on slot
 
@@ -255,6 +262,7 @@ class TestCreateBooking:
 
         assert result is mock_booking
         MockBookingRepo.return_value.create_booking.assert_awaited_once()
+        assert mock_audit_recorder.await_args.kwargs["action"] == "created"
 
     async def test_slot_held_by_another_user(
         self, mock_db, mock_redis, mock_service, mock_staff, user_id, future_start
@@ -427,7 +435,7 @@ class TestCreateBooking:
 
 class TestCreateAdminBooking:
     async def test_guest_booking_uses_same_staff_rules(
-        self, mock_db, mock_redis, mock_service, mock_booking, mock_staff, future_start
+        self, mock_db, mock_redis, mock_service, mock_booking, mock_staff, future_start, mock_audit_recorder
     ):
         mock_redis.get.return_value = None
 
@@ -463,6 +471,7 @@ class TestCreateAdminBooking:
         kwargs = MockBookingRepo.return_value.create_booking.await_args.kwargs
         assert kwargs["user_id"] is None
         assert kwargs["customer_name"] == "Walk In"
+        assert mock_audit_recorder.await_args.kwargs["action"] == "admin_created"
 
     async def test_guest_booking_rejects_overlap(
         self, mock_db, mock_redis, mock_service, mock_staff, future_start

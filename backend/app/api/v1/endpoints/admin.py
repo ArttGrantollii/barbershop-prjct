@@ -7,11 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.dependencies import get_current_admin
-from app.db.models.booking import BookingStatus
-from app.db.models.booking import WaitlistStatus
+from app.db.models.booking import AuditActorRole, BookingStatus, WaitlistStatus
 from app.db.models.user import User
 from app.db.redis import get_redis
 from app.db.repositories.booking_repository import BookingRepository
+from app.db.repositories.booking_audit_repository import BookingAuditRepository
 from app.db.repositories.business_repository import BusinessRepository
 from app.db.repositories.service_repository import ServiceRepository
 from app.db.repositories.staff_repository import StaffRepository
@@ -20,6 +20,7 @@ from app.db.session import get_db
 from app.schemas.booking import (
     AdminBookingCreate,
     AdminDashboardResponse,
+    BookingAuditEventResponse,
     BookingCancelRequest,
     BookingDetailResponse,
     BookingPage,
@@ -51,6 +52,7 @@ from app.schemas.waitlist import (
     WaitlistEntryUpdate,
 )
 from app.services.booking_service import cancel_booking, create_admin_booking, reschedule_booking
+from app.services.audit_service import record_booking_audit
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -453,6 +455,17 @@ async def admin_cancel(
     return await cancel_booking(db, redis, booking_id, admin.id, reason=body.reason, is_admin=True)
 
 
+@router.get("/bookings/{booking_id}/audit-events", response_model=list[BookingAuditEventResponse])
+async def list_booking_audit_events(
+    booking_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    if not await BookingRepository(db).get_by_id(booking_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
+    return await BookingAuditRepository(db).get_for_booking(booking_id)
+
+
 @router.post("/bookings/{booking_id}/reschedule", response_model=BookingDetailResponse)
 async def admin_reschedule(
     booking_id: uuid.UUID,
@@ -476,7 +489,7 @@ async def admin_reschedule(
 async def admin_complete(
     booking_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    admin: User = Depends(get_current_admin),
 ):
     repo = BookingRepository(db)
     booking = await repo.get_by_id(booking_id)
@@ -487,8 +500,18 @@ async def admin_complete(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Booking is already {booking.status.value}",
         )
+    previous_values = {"status": booking.status}
     booking.status = BookingStatus.COMPLETED
     await db.commit()
+    await record_booking_audit(
+        db,
+        booking_id=booking_id,
+        action="completed",
+        actor_id=admin.id,
+        actor_role=AuditActorRole.ADMIN,
+        previous_values=previous_values,
+        new_values={"status": BookingStatus.COMPLETED},
+    )
     return await BookingRepository(db).get_with_details(booking_id)
 
 
@@ -496,7 +519,7 @@ async def admin_complete(
 async def admin_no_show(
     booking_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    admin: User = Depends(get_current_admin),
 ):
     """Mark a booking as a no-show. Only valid on confirmed bookings whose
     start time has passed — marking a future booking as no-show would be a
@@ -516,8 +539,18 @@ async def admin_no_show(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot mark a future booking as no-show.",
         )
+    previous_values = {"status": booking.status}
     booking.status = BookingStatus.NO_SHOW
     await db.commit()
+    await record_booking_audit(
+        db,
+        booking_id=booking_id,
+        action="no_show",
+        actor_id=admin.id,
+        actor_role=AuditActorRole.ADMIN,
+        previous_values=previous_values,
+        new_values={"status": BookingStatus.NO_SHOW},
+    )
     return await BookingRepository(db).get_with_details(booking_id)
 
 
@@ -609,6 +642,14 @@ async def book_waitlist_entry(
         notes=body.notes or entry.notes,
     )
     entry = await repo.update_status(entry, WaitlistStatus.BOOKED, booking_id=booking.id)
+    await record_booking_audit(
+        db,
+        booking_id=booking.id,
+        action="waitlist_converted",
+        actor_id=admin.id,
+        actor_role=AuditActorRole.ADMIN,
+        new_values={"waitlist_entry_id": entry.id},
+    )
     return WaitlistEntryBookedResponse(
         waitlist_entry=await repo.get_with_details(entry.id),
         booking=booking,

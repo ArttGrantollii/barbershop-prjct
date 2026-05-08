@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { parseISO, isPast } from "date-fns"
-import { Calendar, CalendarClock, Clock, ChevronLeft, ChevronRight, Plus, Search, X } from "lucide-react"
+import { Calendar, CalendarClock, Clock, ChevronLeft, ChevronRight, History, Plus, Search, X } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { useBusinessInfo } from "@/hooks/useBusinessInfo"
 import { RescheduleDialog } from "@/components/RescheduleDialog"
 import { salonDateShort, salonTime } from "@/lib/datetime"
 import { cn } from "@/lib/utils"
 import api from "@/lib/api"
-import type { Booking, BookingPage, BookingStatus, Service, StaffWithServices } from "@/types"
+import type { Booking, BookingAuditEvent, BookingPage, BookingStatus, Service, StaffWithServices } from "@/types"
 
 const PAGE_SIZE = 20
 
@@ -50,6 +50,7 @@ export default function AdminBookingsPage() {
   const [startTo, setStartTo] = useState("")
   const [page, setPage] = useState(0)
   const [rescheduleBooking, setRescheduleBooking] = useState<Booking | null>(null)
+  const [historyBookingId, setHistoryBookingId] = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)
   const [createForm, setCreateForm] = useState({
     customer_name: "",
@@ -87,6 +88,12 @@ export default function AdminBookingsPage() {
       if (startTo)      params.set("start_to", startTo)
       return (await api.get(`/api/v1/admin/bookings?${params}`)).data
     },
+  })
+
+  const { data: auditEvents = [], isLoading: isHistoryLoading } = useQuery<BookingAuditEvent[]>({
+    queryKey: ["booking-audit-events", historyBookingId],
+    enabled: !!historyBookingId,
+    queryFn: async () => (await api.get(`/api/v1/admin/bookings/${historyBookingId}/audit-events`)).data,
   })
 
   const { data: services = [] } = useQuery<Service[]>({
@@ -463,6 +470,34 @@ export default function AdminBookingsPage() {
                       >
                         Complete
                       </button>
+                    </div>
+                  )}
+                  <button
+                    onClick={() => setHistoryBookingId((id) => id === booking.id ? null : booking.id)}
+                    className="flex items-center gap-2 px-4 py-2 text-xs tracking-widest uppercase border border-border hover:bg-secondary transition-colors shrink-0"
+                  >
+                    <History className="h-3.5 w-3.5" />
+                    History
+                  </button>
+                  {historyBookingId === booking.id && (
+                    <div className="sm:basis-full border-t border-border pt-4 mt-1">
+                      {isHistoryLoading ? (
+                        <p className="text-xs text-muted-foreground tracking-widest uppercase">Loading history...</p>
+                      ) : auditEvents.length === 0 ? (
+                        <p className="text-xs text-muted-foreground tracking-widest uppercase">No history recorded.</p>
+                      ) : (
+                        <div className="grid gap-2">
+                          {auditEvents.map((event) => (
+                            <div key={event.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-xs border border-border px-3 py-2">
+                              <div className="flex flex-wrap items-center gap-3">
+                                <span className="font-medium uppercase tracking-widest">{event.action.replace(/_/g, " ")}</span>
+                                <span className="text-muted-foreground uppercase tracking-widest">{event.actor_role}</span>
+                              </div>
+                              <span className="text-muted-foreground tabular-nums">{salonDateShort(parseISO(event.created_at), tz)} {salonTime(parseISO(event.created_at), tz)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
