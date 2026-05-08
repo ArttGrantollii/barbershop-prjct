@@ -98,7 +98,7 @@ class BookingRepository(BaseRepository[Booking]):
 
     async def count_confirmed_for_user_on_date(
         self,
-        user_id: uuid.UUID,
+        user_id: uuid.UUID | None,
         target_date: date,
         exclude_id: uuid.UUID | None = None,
     ) -> int:
@@ -138,6 +138,9 @@ class BookingRepository(BaseRepository[Booking]):
                 or_(
                     func.lower(User.name).like(term),
                     func.lower(User.email).like(term),
+                    func.lower(Booking.customer_name).like(term),
+                    func.lower(Booking.customer_email).like(term),
+                    func.lower(Booking.customer_phone).like(term),
                 )
             )
         if start_from is not None:
@@ -162,7 +165,7 @@ class BookingRepository(BaseRepository[Booking]):
         clauses = self._admin_filter_clauses(status, q, start_from, start_to)
         stmt = select(func.count()).select_from(Booking)
         if q:
-            stmt = stmt.join(User, User.id == Booking.user_id)
+            stmt = stmt.outerjoin(User, User.id == Booking.user_id)
         if clauses:
             stmt = stmt.where(*clauses)
         result = await self.db.execute(stmt)
@@ -265,7 +268,7 @@ class BookingRepository(BaseRepository[Booking]):
             .offset(offset)
         )
         if q:
-            stmt = stmt.join(User, User.id == Booking.user_id)
+            stmt = stmt.outerjoin(User, User.id == Booking.user_id)
         if clauses:
             stmt = stmt.where(*clauses)
         result = await self.db.execute(stmt)
@@ -279,14 +282,22 @@ class BookingRepository(BaseRepository[Booking]):
         start_time: datetime,
         end_time: datetime,
         notes: str | None = None,
+        status: BookingStatus = BookingStatus.CONFIRMED,
+        customer_name: str | None = None,
+        customer_email: str | None = None,
+        customer_phone: str | None = None,
     ) -> Booking:
         return await self.save(
             Booking(
                 user_id=user_id,
                 service_id=service_id,
                 staff_id=staff_id,
+                customer_name=customer_name,
+                customer_email=customer_email,
+                customer_phone=customer_phone,
                 start_time=start_time,
                 end_time=end_time,
+                status=status,
                 notes=notes,
             )
         )

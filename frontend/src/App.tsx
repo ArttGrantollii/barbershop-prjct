@@ -15,6 +15,7 @@ import MyBookingsPage from "@/pages/MyBookingsPage"
 import ProfilePage from "@/pages/ProfilePage"
 import AdminDashboardPage from "@/pages/admin/AdminDashboardPage"
 import AdminBookingsPage from "@/pages/admin/AdminBookingsPage"
+import AdminWaitlistPage from "@/pages/admin/AdminWaitlistPage"
 import AdminServicesPage from "@/pages/admin/AdminServicesPage"
 import AdminStaffPage from "@/pages/admin/AdminStaffPage"
 import AdminHoursPage from "@/pages/admin/AdminHoursPage"
@@ -52,6 +53,7 @@ function AnimatedRoutes() {
           <Route index element={<Navigate to="/admin/dashboard" replace />} />
           <Route path="dashboard" element={<PageTransition><AdminDashboardPage /></PageTransition>} />
           <Route path="bookings" element={<PageTransition><AdminBookingsPage /></PageTransition>} />
+          <Route path="waitlist" element={<PageTransition><AdminWaitlistPage /></PageTransition>} />
           <Route path="services" element={<PageTransition><AdminServicesPage /></PageTransition>} />
           <Route path="staff" element={<PageTransition><AdminStaffPage /></PageTransition>} />
           <Route path="hours" element={<PageTransition><AdminHoursPage /></PageTransition>} />

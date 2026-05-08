@@ -28,6 +28,9 @@ def _booking_mock(start_in_hours: float = 24, reminder_sent_at=None) -> MagicMoc
     b.user.name = "Test"
     b.user.email = "test@example.com"
     b.user.phone = None
+    b.customer_name = "Guest"
+    b.customer_email = "guest@example.com"
+    b.customer_phone = None
     b.service = MagicMock()
     b.service.name = "Haircut"
     b.service.duration_minutes = 30
@@ -121,6 +124,8 @@ class TestSendDueReminders:
     async def test_skips_booking_with_missing_relations(self, mock_session_factory):
         booking = _booking_mock()
         booking.user = None
+        booking.customer_name = None
+        booking.customer_email = None
         scalars = MagicMock()
         scalars.all.return_value = [booking]
         result = MagicMock()
@@ -134,5 +139,23 @@ class TestSendDueReminders:
         notify.assert_not_called()
         assert booking.reminder_attempted_at is not None
         assert booking.reminder_sent_at is None
-        assert booking.reminder_error == "missing user or service relation"
+        assert booking.reminder_error == "missing customer or service relation"
         assert mock_session_factory.commit.await_count == 2
+
+    async def test_sends_guest_booking_reminder_from_snapshot(self, mock_session_factory):
+        booking = _booking_mock()
+        booking.user = None
+        scalars = MagicMock()
+        scalars.all.return_value = [booking]
+        result = MagicMock()
+        result.scalars.return_value = scalars
+        mock_session_factory.execute = AsyncMock(return_value=result)
+
+        with patch(f"{MODULE}.notify_booking_reminder", new_callable=AsyncMock, return_value=True) as notify:
+            sent = await send_due_reminders()
+
+        assert sent == 1
+        payload = notify.await_args.args[0]
+        assert payload.customer_name == "Guest"
+        assert payload.customer_email == "guest@example.com"
+        assert booking.reminder_sent_at is not None

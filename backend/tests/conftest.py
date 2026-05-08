@@ -98,6 +98,9 @@ def mock_booking(
     booking.user_id = user_id
     booking.service_id = service_id
     booking.staff_id = staff_id
+    booking.customer_name = "Test User"
+    booking.customer_email = "test@example.com"
+    booking.customer_phone = "1234567890"
     booking.start_time = future_start
     booking.end_time = future_start + timedelta(minutes=30)
     booking.status = BookingStatus.CONFIRMED

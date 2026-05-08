@@ -79,9 +79,12 @@ export interface StaffSummary {
 
 export interface Booking {
   id: string
-  user_id: string
+  user_id: string | null
   service_id: string
   staff_id: string
+  customer_name: string | null
+  customer_email: string | null
+  customer_phone: string | null
   start_time: string
   end_time: string
   status: BookingStatus
@@ -129,4 +132,24 @@ export interface TimeSlot {
   start_time: string
   end_time: string
   status: SlotStatus
+}
+
+export type WaitlistStatus = "active" | "booked" | "cancelled"
+
+export interface WaitlistEntry {
+  id: string
+  user_id: string | null
+  service_id: string
+  staff_id: string | null
+  booking_id: string | null
+  customer_name: string
+  customer_email: string | null
+  customer_phone: string | null
+  preferred_date: string | null
+  notes: string | null
+  status: WaitlistStatus
+  created_at: string
+  service: ServiceSummary | null
+  user: UserSummary | null
+  staff: StaffSummary | null
 }
