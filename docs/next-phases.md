@@ -4,13 +4,13 @@ This branch is a parking place for the remaining product and production gaps.
 Do not treat this as an implementation branch yet; split focused work branches
 from `main` when starting each phase.
 
-## Phase A: Account Recovery and Email Verification
+## Phase A: Manual Admin Booking, Walk-Ins, and Waitlist
 
-- Add email verification tokens and verified email state.
-- Add password reset request and reset confirmation flow.
-- Add rate limits for auth recovery endpoints.
-- Add frontend screens for verify/reset flows.
-- Add notification templates and tests.
+- Add admin booking creation that can choose customer, service, staff, and time.
+- Add lightweight walk-in customer flow.
+- Add waitlist model for service/date/staff preferences.
+- Add admin controls to convert waitlist entries into bookings.
+- Keep overlap, staff schedule, hold, and no-show rules consistent with customer bookings.
 
 ## Phase B: Audit Trail
 
@@ -19,13 +19,13 @@ from `main` when starting each phase.
 - Expose admin booking history in the UI.
 - Include actor, previous values, new values, timestamp, and source.
 
-## Phase C: Manual Admin Booking, Walk-Ins, and Waitlist
+## Phase C: Account Recovery and Email Verification
 
-- Add admin booking creation that can choose customer, service, staff, and time.
-- Add lightweight walk-in customer flow.
-- Add waitlist model for service/date/staff preferences.
-- Add admin controls to convert waitlist entries into bookings.
-- Keep overlap, staff schedule, hold, and no-show rules consistent with customer bookings.
+- Add email verification tokens and verified email state.
+- Add password reset request and reset confirmation flow.
+- Add rate limits for auth recovery endpoints.
+- Add frontend screens for verify/reset flows.
+- Add notification templates and tests.
 
 ## Phase D: CI Pipeline
 
