@@ -1,10 +1,11 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from app.db.models.booking import BookingStatus
+from app.db.models.booking import AuditActorRole, BookingStatus
 
 
 class BookingCreate(BaseModel):
@@ -99,3 +100,16 @@ class AdminDashboardResponse(BaseModel):
     confirmed_total: int
     cancelled_total: int
     today_schedule: list[BookingDetailResponse]
+
+
+class BookingAuditEventResponse(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: uuid.UUID
+    booking_id: uuid.UUID
+    actor_id: uuid.UUID | None
+    actor_role: AuditActorRole
+    action: str
+    previous_values: dict[str, Any] | None = Field(default=None)
+    new_values: dict[str, Any] | None = Field(default=None)
+    created_at: datetime

@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.websocket_manager import manager
-from app.db.models.booking import Booking, BookingStatus
+from app.db.models.booking import AuditActorRole, Booking, BookingStatus
 from app.db.repositories.booking_repository import BookingRepository
 from app.db.repositories.business_repository import BusinessRepository
 from app.db.repositories.service_repository import ServiceRepository
@@ -18,6 +18,7 @@ from app.db.repositories.staff_repository import StaffRepository
 from app.db.repositories.user_repository import UserRepository
 from app.notifications.schemas import BookingInfo
 from app.notifications.service import notify_booking_cancelled, notify_booking_confirmed
+from app.services.audit_service import record_booking_audit
 from app.services.availability_service import slot_cooldown_key, slot_hold_key
 
 logger = structlog.get_logger(__name__)
@@ -456,6 +457,20 @@ async def create_booking(
         staff_id=str(resolved_staff_id),
         start=start_time.isoformat(),
     )
+    await record_booking_audit(
+        db,
+        booking_id=booking.id,
+        action="created",
+        actor_id=user_id,
+        actor_role=AuditActorRole.CUSTOMER,
+        new_values={
+            "service_id": service_id,
+            "staff_id": resolved_staff_id,
+            "start_time": start_time,
+            "end_time": end_time,
+            "status": booking.status,
+        },
+    )
 
     room = start_time.date().isoformat()
     await manager.broadcast(room, {
@@ -594,6 +609,24 @@ async def create_admin_booking(
         staff_id=str(staff_id),
         status=booking_status.value,
         start=start_time.isoformat(),
+    )
+    await record_booking_audit(
+        db,
+        booking_id=booking.id,
+        action="admin_created" if booking_status == BookingStatus.CONFIRMED else "walk_in_completed",
+        actor_id=admin_id,
+        actor_role=AuditActorRole.ADMIN,
+        new_values={
+            "user_id": user_id,
+            "customer_name": customer_name,
+            "customer_email": customer_email,
+            "customer_phone": customer_phone,
+            "service_id": service_id,
+            "staff_id": staff_id,
+            "start_time": start_time,
+            "end_time": end_time,
+            "status": booking_status,
+        },
     )
 
     if booking_status == BookingStatus.CONFIRMED:
@@ -736,6 +769,11 @@ async def reschedule_booking(
         )
 
     old_start = _utc(booking.start_time)
+    old_values = {
+        "start_time": old_start,
+        "end_time": _utc(booking.end_time),
+        "staff_id": booking.staff_id,
+    }
 
     booking.start_time = new_start_time
     booking.end_time = new_end_time
@@ -765,6 +803,19 @@ async def reschedule_booking(
         old_start=old_start.isoformat(),
         new_start=new_start_time.isoformat(),
         is_admin=is_admin,
+    )
+    await record_booking_audit(
+        db,
+        booking_id=booking_id,
+        action="rescheduled",
+        actor_id=user_id,
+        actor_role=AuditActorRole.ADMIN if is_admin else AuditActorRole.CUSTOMER,
+        previous_values=old_values,
+        new_values={
+            "start_time": new_start_time,
+            "end_time": new_end_time,
+            "staff_id": target_staff_id,
+        },
     )
 
     # Free the old slot in everyone's UI and mark the new one as taken.
@@ -841,6 +892,10 @@ async def cancel_booking(
     # and accessing them afterwards would trigger a lazy load (MissingGreenlet).
     cancelled_user_id = booking.user_id
     cancelled_start = _utc(booking.start_time)
+    previous_values = {
+        "status": booking.status,
+        "cancellation_reason": booking.cancellation_reason,
+    }
 
     booking.status = BookingStatus.CANCELLED
     booking.cancellation_reason = reason
@@ -867,6 +922,18 @@ async def cancel_booking(
         booking_id=str(booking_id),
         user_id=str(user_id),
         is_admin=is_admin,
+    )
+    await record_booking_audit(
+        db,
+        booking_id=booking_id,
+        action="cancelled",
+        actor_id=user_id,
+        actor_role=AuditActorRole.ADMIN if is_admin else AuditActorRole.CUSTOMER,
+        previous_values=previous_values,
+        new_values={
+            "status": BookingStatus.CANCELLED,
+            "cancellation_reason": reason,
+        },
     )
 
     room = _utc(booking.start_time).date().isoformat()

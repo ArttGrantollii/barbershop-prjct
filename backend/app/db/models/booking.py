@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, Enum as SQLEnum, ForeignKey, String, Text
+from sqlalchemy import Date, DateTime, Enum as SQLEnum, ForeignKey, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
@@ -19,6 +19,12 @@ class WaitlistStatus(str, enum.Enum):
     ACTIVE = "active"
     BOOKED = "booked"
     CANCELLED = "cancelled"
+
+
+class AuditActorRole(str, enum.Enum):
+    CUSTOMER = "customer"
+    ADMIN = "admin"
+    SYSTEM = "system"
 
 
 class Booking(Base, TimestampMixin):
@@ -77,3 +83,20 @@ class WaitlistEntry(Base, TimestampMixin):
     service: Mapped["Service"] = relationship("Service")
     staff: Mapped["Staff"] = relationship("Staff")
     booking: Mapped["Booking"] = relationship("Booking")
+
+
+class BookingAuditEvent(Base, TimestampMixin):
+    __tablename__ = "booking_audit_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    booking_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("bookings.id"), index=True)
+    actor_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), index=True, nullable=True)
+    actor_role: Mapped[AuditActorRole] = mapped_column(
+        SQLEnum(AuditActorRole, values_callable=lambda obj: [e.value for e in obj]),
+    )
+    action: Mapped[str] = mapped_column(String(50), index=True)
+    previous_values: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    new_values: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    booking: Mapped["Booking"] = relationship("Booking")
+    actor: Mapped["User"] = relationship("User")
