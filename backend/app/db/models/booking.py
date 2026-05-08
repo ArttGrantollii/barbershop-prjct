@@ -1,8 +1,8 @@
 import enum
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import DateTime, Enum as SQLEnum, ForeignKey, Text
+from sqlalchemy import Date, DateTime, Enum as SQLEnum, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
@@ -15,13 +15,22 @@ class BookingStatus(str, enum.Enum):
     NO_SHOW = "no_show"
 
 
+class WaitlistStatus(str, enum.Enum):
+    ACTIVE = "active"
+    BOOKED = "booked"
+    CANCELLED = "cancelled"
+
+
 class Booking(Base, TimestampMixin):
     __tablename__ = "bookings"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), index=True, nullable=True)
     service_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("services.id"))
     staff_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("staff.id"), index=True)
+    customer_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    customer_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    customer_phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
     start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     end_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     status: Mapped[BookingStatus] = mapped_column(
@@ -44,3 +53,27 @@ class Booking(Base, TimestampMixin):
     user: Mapped["User"] = relationship("User", back_populates="bookings")
     service: Mapped["Service"] = relationship("Service", back_populates="bookings")
     staff: Mapped["Staff"] = relationship("Staff", back_populates="bookings")
+
+
+class WaitlistEntry(Base, TimestampMixin):
+    __tablename__ = "waitlist_entries"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), index=True, nullable=True)
+    service_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("services.id"), index=True)
+    staff_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("staff.id"), index=True, nullable=True)
+    booking_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("bookings.id"), nullable=True)
+    customer_name: Mapped[str] = mapped_column(String(100))
+    customer_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    customer_phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    preferred_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[WaitlistStatus] = mapped_column(
+        SQLEnum(WaitlistStatus, values_callable=lambda obj: [e.value for e in obj]),
+        default=WaitlistStatus.ACTIVE,
+    )
+
+    user: Mapped["User"] = relationship("User")
+    service: Mapped["Service"] = relationship("Service")
+    staff: Mapped["Staff"] = relationship("Staff")
+    booking: Mapped["Booking"] = relationship("Booking")

@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.db.models.booking import BookingStatus
 from app.services.booking_service import (
     cancel_booking,
+    create_admin_booking,
     create_booking,
     hold_slot,
     reschedule_booking,
@@ -304,7 +305,7 @@ class TestCreateBooking:
         assert exc.value.status_code == 409
 
     async def test_db_exclusion_constraint_triggers_409(
-        self, mock_db, mock_redis, mock_service, mock_staff, user_id, future_start
+        self, mock_db, mock_redis, mock_service, mock_staff, mock_user, user_id, future_start
     ):
         """Concurrent booking slips past the overlap check but is caught by the
         DB exclusion constraint — IntegrityError must become a 409."""
@@ -315,11 +316,13 @@ class TestCreateBooking:
             patch(f"{MODULE}.BookingRepository") as MockBookingRepo,
             patch(f"{MODULE}.BusinessRepository") as MockBizRepo,
             patch(f"{MODULE}.StaffRepository") as MockStaffRepo,
+            patch(f"{MODULE}.UserRepository") as MockUserRepo,
         ):
             MockSvcRepo.return_value.get_by_id = AsyncMock(return_value=mock_service)
             _mock_business_repo_clear(MockBizRepo)
             _mock_booking_repo_clear(MockBookingRepo)
             _mock_staff_repo_resolves_to(MockStaffRepo, mock_staff)
+            MockUserRepo.return_value.get_by_id = AsyncMock(return_value=mock_user)
             MockBookingRepo.return_value.create_booking = AsyncMock(
                 side_effect=IntegrityError("INSERT", {}, Exception("exclusion constraint"))
             )
@@ -416,6 +419,80 @@ class TestCreateBooking:
             result = await create_booking(mock_db, mock_redis, user_id, mock_service.id, future_start)
 
         assert result is mock_booking
+
+
+# ---------------------------------------------------------------------------
+# create_admin_booking
+# ---------------------------------------------------------------------------
+
+class TestCreateAdminBooking:
+    async def test_guest_booking_uses_same_staff_rules(
+        self, mock_db, mock_redis, mock_service, mock_booking, mock_staff, future_start
+    ):
+        mock_redis.get.return_value = None
+
+        with (
+            patch(f"{MODULE}.ServiceRepository") as MockSvcRepo,
+            patch(f"{MODULE}.BookingRepository") as MockBookingRepo,
+            patch(f"{MODULE}.BusinessRepository") as MockBizRepo,
+            patch(f"{MODULE}.StaffRepository") as MockStaffRepo,
+            patch(f"{MODULE}.manager") as mock_manager,
+            patch(f"{MODULE}.notify_booking_confirmed"),
+        ):
+            MockSvcRepo.return_value.get_by_id = AsyncMock(return_value=mock_service)
+            _mock_business_repo_clear(MockBizRepo)
+            _mock_booking_repo_clear(MockBookingRepo)
+            _mock_staff_repo_resolves_to(MockStaffRepo, mock_staff)
+            MockBookingRepo.return_value.create_booking = AsyncMock(return_value=mock_booking)
+            MockBookingRepo.return_value.get_with_details = AsyncMock(return_value=mock_booking)
+            mock_manager.broadcast = AsyncMock()
+
+            result = await create_admin_booking(
+                mock_db,
+                mock_redis,
+                uuid.uuid4(),
+                mock_service.id,
+                mock_staff.id,
+                future_start,
+                customer_name="Walk In",
+                customer_phone="123",
+            )
+
+        assert result is mock_booking
+        MockBookingRepo.return_value.create_booking.assert_awaited_once()
+        kwargs = MockBookingRepo.return_value.create_booking.await_args.kwargs
+        assert kwargs["user_id"] is None
+        assert kwargs["customer_name"] == "Walk In"
+
+    async def test_guest_booking_rejects_overlap(
+        self, mock_db, mock_redis, mock_service, mock_staff, future_start
+    ):
+        mock_redis.get.return_value = None
+
+        with (
+            patch(f"{MODULE}.ServiceRepository") as MockSvcRepo,
+            patch(f"{MODULE}.BookingRepository") as MockBookingRepo,
+            patch(f"{MODULE}.BusinessRepository") as MockBizRepo,
+            patch(f"{MODULE}.StaffRepository") as MockStaffRepo,
+        ):
+            MockSvcRepo.return_value.get_by_id = AsyncMock(return_value=mock_service)
+            _mock_business_repo_clear(MockBizRepo)
+            _mock_booking_repo_clear(MockBookingRepo)
+            _mock_staff_repo_resolves_to(MockStaffRepo, mock_staff)
+            MockBookingRepo.return_value.has_overlap = AsyncMock(return_value=True)
+
+            with pytest.raises(HTTPException) as exc:
+                await create_admin_booking(
+                    mock_db,
+                    mock_redis,
+                    uuid.uuid4(),
+                    mock_service.id,
+                    mock_staff.id,
+                    future_start,
+                    customer_name="Walk In",
+                )
+
+        assert exc.value.status_code == 409
 
 
 # ---------------------------------------------------------------------------

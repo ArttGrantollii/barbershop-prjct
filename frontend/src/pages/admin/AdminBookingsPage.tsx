@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { parseISO, isPast } from "date-fns"
-import { Calendar, CalendarClock, Clock, ChevronLeft, ChevronRight, Search, X } from "lucide-react"
+import { Calendar, CalendarClock, Clock, ChevronLeft, ChevronRight, Plus, Search, X } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { useBusinessInfo } from "@/hooks/useBusinessInfo"
 import { RescheduleDialog } from "@/components/RescheduleDialog"
 import { salonDateShort, salonTime } from "@/lib/datetime"
 import { cn } from "@/lib/utils"
 import api from "@/lib/api"
-import type { Booking, BookingPage, BookingStatus } from "@/types"
+import type { Booking, BookingPage, BookingStatus, Service, StaffWithServices } from "@/types"
 
 const PAGE_SIZE = 20
 
@@ -50,6 +50,18 @@ export default function AdminBookingsPage() {
   const [startTo, setStartTo] = useState("")
   const [page, setPage] = useState(0)
   const [rescheduleBooking, setRescheduleBooking] = useState<Booking | null>(null)
+  const [showCreate, setShowCreate] = useState(false)
+  const [createForm, setCreateForm] = useState({
+    customer_name: "",
+    customer_email: "",
+    customer_phone: "",
+    service_id: "",
+    staff_id: "",
+    date: "",
+    time: "",
+    status: "confirmed" as "confirmed" | "completed",
+    notes: "",
+  })
 
   // Debounce: commit `searchInput` to `searchTerm` after 300ms of idle typing.
   useEffect(() => {
@@ -75,6 +87,16 @@ export default function AdminBookingsPage() {
       if (startTo)      params.set("start_to", startTo)
       return (await api.get(`/api/v1/admin/bookings?${params}`)).data
     },
+  })
+
+  const { data: services = [] } = useQuery<Service[]>({
+    queryKey: ["admin-services"],
+    queryFn: async () => (await api.get("/api/v1/admin/services")).data,
+  })
+
+  const { data: staff = [] } = useQuery<StaffWithServices[]>({
+    queryKey: ["admin-staff"],
+    queryFn: async () => (await api.get("/api/v1/admin/staff")).data,
   })
 
   const bookings = data?.items ?? []
@@ -121,12 +143,157 @@ export default function AdminBookingsPage() {
     onError: (e: any) => toast({ variant: "destructive", title: e?.response?.data?.detail ?? "Error" }),
   })
 
+  const createMutation = useMutation({
+    mutationFn: () => {
+      const start_time = new Date(`${createForm.date}T${createForm.time}`).toISOString()
+      return api.post("/api/v1/admin/bookings", {
+        service_id: createForm.service_id,
+        staff_id: createForm.staff_id,
+        start_time,
+        status: createForm.status,
+        customer_name: createForm.customer_name,
+        customer_email: createForm.customer_email || null,
+        customer_phone: createForm.customer_phone || null,
+        notes: createForm.notes || null,
+      })
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-bookings"] })
+      queryClient.invalidateQueries({ queryKey: ["admin-dashboard"] })
+      toast({ title: createForm.status === "completed" ? "Walk-in recorded" : "Booking created" })
+      setShowCreate(false)
+      setCreateForm({
+        customer_name: "",
+        customer_email: "",
+        customer_phone: "",
+        service_id: "",
+        staff_id: "",
+        date: "",
+        time: "",
+        status: "confirmed",
+        notes: "",
+      })
+    },
+    onError: (e: any) => toast({ variant: "destructive", title: e?.response?.data?.detail ?? "Error" }),
+  })
+
+  const canCreate = !!createForm.customer_name.trim()
+    && !!createForm.service_id
+    && !!createForm.staff_id
+    && !!createForm.date
+    && !!createForm.time
+
   return (
     <div>
       <div className="mb-8">
         <p className="text-[10px] tracking-[0.5em] uppercase text-muted-foreground mb-2">Admin</p>
-        <h1 className="font-display text-5xl uppercase">Bookings</h1>
+        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
+          <h1 className="font-display text-5xl uppercase">Bookings</h1>
+          <button
+            onClick={() => setShowCreate((v) => !v)}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 text-xs tracking-widest uppercase border border-border hover:bg-secondary transition-colors"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            New Booking
+          </button>
+        </div>
       </div>
+
+      {showCreate && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (canCreate) createMutation.mutate()
+          }}
+          className="border border-border mb-8"
+        >
+          <div className="grid md:grid-cols-3 gap-px bg-border">
+            <input
+              value={createForm.customer_name}
+              onChange={(e) => setCreateForm((f) => ({ ...f, customer_name: e.target.value }))}
+              placeholder="Customer name"
+              className="bg-background px-4 py-3 text-sm outline-none"
+            />
+            <input
+              value={createForm.customer_email}
+              onChange={(e) => setCreateForm((f) => ({ ...f, customer_email: e.target.value }))}
+              placeholder="Email"
+              type="email"
+              className="bg-background px-4 py-3 text-sm outline-none"
+            />
+            <input
+              value={createForm.customer_phone}
+              onChange={(e) => setCreateForm((f) => ({ ...f, customer_phone: e.target.value }))}
+              placeholder="Phone"
+              className="bg-background px-4 py-3 text-sm outline-none"
+            />
+            <select
+              value={createForm.service_id}
+              onChange={(e) => setCreateForm((f) => ({ ...f, service_id: e.target.value, staff_id: "" }))}
+              className="bg-background px-4 py-3 text-sm outline-none"
+            >
+              <option value="">Service</option>
+              {services.filter((s) => s.is_active).map((service) => (
+                <option key={service.id} value={service.id}>{service.name}</option>
+              ))}
+            </select>
+            <select
+              value={createForm.staff_id}
+              onChange={(e) => setCreateForm((f) => ({ ...f, staff_id: e.target.value }))}
+              className="bg-background px-4 py-3 text-sm outline-none"
+            >
+              <option value="">Stylist</option>
+              {staff
+                .filter((person) => person.is_active && (!createForm.service_id || person.service_ids.includes(createForm.service_id)))
+                .map((person) => (
+                  <option key={person.id} value={person.id}>{person.name}</option>
+                ))}
+            </select>
+            <select
+              value={createForm.status}
+              onChange={(e) => setCreateForm((f) => ({ ...f, status: e.target.value as "confirmed" | "completed" }))}
+              className="bg-background px-4 py-3 text-sm outline-none"
+            >
+              <option value="confirmed">Scheduled booking</option>
+              <option value="completed">Completed walk-in</option>
+            </select>
+            <input
+              type="date"
+              value={createForm.date}
+              onChange={(e) => setCreateForm((f) => ({ ...f, date: e.target.value }))}
+              className="bg-background px-4 py-3 text-sm outline-none [color-scheme:dark]"
+            />
+            <input
+              type="time"
+              value={createForm.time}
+              onChange={(e) => setCreateForm((f) => ({ ...f, time: e.target.value }))}
+              className="bg-background px-4 py-3 text-sm outline-none [color-scheme:dark]"
+            />
+            <input
+              value={createForm.notes}
+              onChange={(e) => setCreateForm((f) => ({ ...f, notes: e.target.value }))}
+              placeholder="Notes"
+              className="bg-background px-4 py-3 text-sm outline-none"
+            />
+          </div>
+          <div className="flex justify-end gap-2 p-3 border-t border-border">
+            <button
+              type="button"
+              onClick={() => setShowCreate(false)}
+              className="px-4 py-2 text-xs tracking-widest uppercase border border-border hover:bg-secondary transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={!canCreate || createMutation.isPending}
+              className="px-4 py-2 text-xs tracking-widest uppercase bg-foreground text-background disabled:opacity-40"
+            >
+              Save
+            </button>
+          </div>
+        </form>
+      )}
 
       {/* search + date range */}
       <div className="border border-border mb-px">
@@ -208,6 +375,9 @@ export default function AdminBookingsPage() {
             {bookings.map((booking, i) => {
               const start = parseISO(booking.start_time)
               const past  = isPast(start)
+              const customerName = booking.user?.name ?? booking.customer_name ?? "Walk-in"
+              const customerEmail = booking.user?.email ?? booking.customer_email
+              const customerPhone = booking.user?.phone ?? booking.customer_phone
               return (
                 <div
                   key={booking.id}
@@ -219,19 +389,21 @@ export default function AdminBookingsPage() {
                 >
                   <div className="flex-1 flex flex-col gap-1.5 min-w-0">
                     <div className="flex items-center gap-3 flex-wrap">
-                      <span className="text-sm font-medium uppercase tracking-wide">{booking.user?.name ?? "Unknown"}</span>
-                      <a
-                        href={`mailto:${booking.user?.email ?? ""}`}
-                        className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-                      >
-                        {booking.user?.email}
-                      </a>
-                      {booking.user?.phone && (
+                      <span className="text-sm font-medium uppercase tracking-wide">{customerName}</span>
+                      {customerEmail && (
                         <a
-                          href={`tel:${booking.user.phone}`}
+                          href={`mailto:${customerEmail}`}
+                          className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                        >
+                          {customerEmail}
+                        </a>
+                      )}
+                      {customerPhone && (
+                        <a
+                          href={`tel:${customerPhone}`}
                           className="text-xs text-muted-foreground hover:text-foreground transition-colors tabular-nums"
                         >
-                          {booking.user.phone}
+                          {customerPhone}
                         </a>
                       )}
                       <StatusLabel status={booking.status} />

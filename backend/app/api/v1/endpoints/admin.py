@@ -8,14 +8,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.dependencies import get_current_admin
 from app.db.models.booking import BookingStatus
+from app.db.models.booking import WaitlistStatus
 from app.db.models.user import User
 from app.db.redis import get_redis
 from app.db.repositories.booking_repository import BookingRepository
 from app.db.repositories.business_repository import BusinessRepository
 from app.db.repositories.service_repository import ServiceRepository
 from app.db.repositories.staff_repository import StaffRepository
+from app.db.repositories.waitlist_repository import WaitlistRepository
 from app.db.session import get_db
 from app.schemas.booking import (
+    AdminBookingCreate,
     AdminDashboardResponse,
     BookingCancelRequest,
     BookingDetailResponse,
@@ -40,7 +43,14 @@ from app.schemas.staff import (
     StaffWorkingHoursUpdate,
     StaffWithServicesResponse,
 )
-from app.services.booking_service import cancel_booking, reschedule_booking
+from app.schemas.waitlist import (
+    WaitlistEntryBookedResponse,
+    WaitlistEntryBookRequest,
+    WaitlistEntryCreate,
+    WaitlistEntryResponse,
+    WaitlistEntryUpdate,
+)
+from app.services.booking_service import cancel_booking, create_admin_booking, reschedule_booking
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -409,6 +419,29 @@ async def list_bookings(
     return BookingPage(items=items, total=total, limit=limit, offset=offset)
 
 
+@router.post("/bookings", response_model=BookingDetailResponse, status_code=status.HTTP_201_CREATED)
+async def admin_create_booking(
+    body: AdminBookingCreate,
+    db: AsyncSession = Depends(get_db),
+    redis=Depends(get_redis),
+    admin: User = Depends(get_current_admin),
+):
+    return await create_admin_booking(
+        db,
+        redis,
+        admin.id,
+        body.service_id,
+        body.staff_id,
+        body.start_time,
+        booking_status=body.status,
+        user_id=body.user_id,
+        customer_name=body.customer_name,
+        customer_email=body.customer_email,
+        customer_phone=body.customer_phone,
+        notes=body.notes,
+    )
+
+
 @router.post("/bookings/{booking_id}/cancel", response_model=BookingDetailResponse)
 async def admin_cancel(
     booking_id: uuid.UUID,
@@ -486,3 +519,97 @@ async def admin_no_show(
     booking.status = BookingStatus.NO_SHOW
     await db.commit()
     return await BookingRepository(db).get_with_details(booking_id)
+
+
+# --- Waitlist -----------------------------------------------------------------
+
+
+@router.get("/waitlist", response_model=list[WaitlistEntryResponse])
+async def list_waitlist(
+    status_filter: WaitlistStatus | None = Query(WaitlistStatus.ACTIVE, alias="status"),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    return await WaitlistRepository(db).get_all_with_details(status_filter)
+
+
+@router.post("/waitlist", response_model=WaitlistEntryResponse, status_code=status.HTTP_201_CREATED)
+async def create_waitlist_entry(
+    body: WaitlistEntryCreate,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    if not await ServiceRepository(db).get_by_id(body.service_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found")
+    customer_name = body.customer_name.strip()
+    if not customer_name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Customer name is required")
+    if body.staff_id and not await StaffRepository(db).staff_offers_service(body.staff_id, body.service_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="That stylist does not offer this service.",
+        )
+    entry = await WaitlistRepository(db).create_entry(
+        service_id=body.service_id,
+        staff_id=body.staff_id,
+        user_id=body.user_id,
+        customer_name=customer_name,
+        customer_email=body.customer_email,
+        customer_phone=body.customer_phone,
+        preferred_date=body.preferred_date,
+        notes=body.notes,
+    )
+    return await WaitlistRepository(db).get_with_details(entry.id)
+
+
+@router.patch("/waitlist/{entry_id}", response_model=WaitlistEntryResponse)
+async def update_waitlist_entry(
+    entry_id: uuid.UUID,
+    body: WaitlistEntryUpdate,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    repo = WaitlistRepository(db)
+    entry = await repo.get_by_id(entry_id)
+    if not entry:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Waitlist entry not found")
+    entry = await repo.update_status(entry, body.status)
+    return await repo.get_with_details(entry.id)
+
+
+@router.post("/waitlist/{entry_id}/book", response_model=WaitlistEntryBookedResponse)
+async def book_waitlist_entry(
+    entry_id: uuid.UUID,
+    body: WaitlistEntryBookRequest,
+    db: AsyncSession = Depends(get_db),
+    redis=Depends(get_redis),
+    admin: User = Depends(get_current_admin),
+):
+    repo = WaitlistRepository(db)
+    entry = await repo.get_by_id(entry_id)
+    if not entry:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Waitlist entry not found")
+    if entry.status != WaitlistStatus.ACTIVE:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Waitlist entry is not active")
+    target_staff_id = body.staff_id or entry.staff_id
+    if target_staff_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Choose a stylist before booking")
+    booking = await create_admin_booking(
+        db,
+        redis,
+        admin.id,
+        entry.service_id,
+        target_staff_id,
+        body.start_time,
+        booking_status=BookingStatus.CONFIRMED,
+        user_id=entry.user_id,
+        customer_name=entry.customer_name,
+        customer_email=entry.customer_email,
+        customer_phone=entry.customer_phone,
+        notes=body.notes or entry.notes,
+    )
+    entry = await repo.update_status(entry, WaitlistStatus.BOOKED, booking_id=booking.id)
+    return WaitlistEntryBookedResponse(
+        waitlist_entry=await repo.get_with_details(entry.id),
+        booking=booking,
+    )

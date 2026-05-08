@@ -170,6 +170,13 @@ def _user_hold_key(user_id: UUID) -> str:
     return f"{USER_HOLD_PREFIX}:{user_id}"
 
 
+def _clean(value: str | None) -> str | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
 async def hold_slot(
     db: AsyncSession,
     redis: Redis,
@@ -415,6 +422,7 @@ async def create_booking(
                 detail="That stylist is no longer available at this time.",
             )
 
+    user = await UserRepository(db).get_by_id(user_id)
     try:
         raw = await booking_repo.create_booking(
             user_id=user_id,
@@ -423,6 +431,9 @@ async def create_booking(
             start_time=start_time,
             end_time=end_time,
             notes=notes,
+            customer_name=user.name if user else None,
+            customer_email=user.email if user else None,
+            customer_phone=user.phone if user else None,
         )
     except IntegrityError:
         await db.rollback()
@@ -454,7 +465,6 @@ async def create_booking(
         "status": "booked",
     })
 
-    user = await UserRepository(db).get_by_id(user_id)
     if user:
         await notify_booking_confirmed(
             BookingInfo(
@@ -468,6 +478,147 @@ async def create_booking(
                 duration_minutes=service.duration_minutes,
             )
         )
+
+    return booking
+
+
+async def create_admin_booking(
+    db: AsyncSession,
+    redis: Redis,
+    admin_id: UUID,
+    service_id: UUID,
+    staff_id: UUID,
+    start_time: datetime,
+    booking_status: BookingStatus = BookingStatus.CONFIRMED,
+    user_id: UUID | None = None,
+    customer_name: str | None = None,
+    customer_email: str | None = None,
+    customer_phone: str | None = None,
+    notes: str | None = None,
+) -> Booking:
+    start_time = _utc(start_time)
+    if booking_status not in {BookingStatus.CONFIRMED, BookingStatus.COMPLETED}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Admin-created bookings can only be confirmed or completed.",
+        )
+
+    service = await ServiceRepository(db).get_by_id(service_id)
+    if not service or not service.is_active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found")
+
+    user = None
+    if user_id is not None:
+        user = await UserRepository(db).get_by_id(user_id)
+        if not user or not user.is_active:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
+
+    customer_name = _clean(customer_name) or (user.name if user else None)
+    customer_email = _clean(customer_email) or (user.email if user else None)
+    customer_phone = _clean(customer_phone) or (user.phone if user else None)
+    if not customer_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Customer name is required for guest or walk-in bookings.",
+        )
+
+    end_time = start_time + timedelta(minutes=service.duration_minutes)
+    booking_repo = BookingRepository(db)
+    staff_repo = StaffRepository(db)
+    business_repo = BusinessRepository(db)
+
+    if not await staff_repo.staff_offers_service(staff_id, service_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="That stylist does not offer this service.",
+        )
+
+    if booking_status == BookingStatus.CONFIRMED:
+        if start_time <= datetime.now(timezone.utc):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Confirmed bookings must start in the future.",
+            )
+        salon_day = _salon_date(start_time)
+        if await business_repo.is_date_blocked(salon_day):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This date is not available for bookings.",
+            )
+        if not await _staff_is_working(staff_repo, business_repo, staff_id, start_time, end_time):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="That stylist is not working at this time.",
+            )
+        holder = await redis.get(slot_hold_key(staff_id, start_time))
+        if holder:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="That time is currently held by a customer.",
+            )
+        if await booking_repo.has_overlap(start_time, end_time, staff_id=staff_id):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="That stylist is already booked at this time.",
+            )
+    elif start_time > datetime.now(timezone.utc):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Completed walk-ins cannot be scheduled in the future.",
+        )
+
+    try:
+        raw = await booking_repo.create_booking(
+            user_id=user_id,
+            service_id=service_id,
+            staff_id=staff_id,
+            start_time=start_time,
+            end_time=end_time,
+            notes=notes,
+            status=booking_status,
+            customer_name=customer_name,
+            customer_email=customer_email,
+            customer_phone=customer_phone,
+        )
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Slot is no longer available")
+
+    booking = await booking_repo.get_with_details(raw.id)
+    logger.info(
+        "admin_booking_created",
+        booking_id=str(booking.id),
+        admin_id=str(admin_id),
+        user_id=str(user_id) if user_id else None,
+        service_id=str(service_id),
+        staff_id=str(staff_id),
+        status=booking_status.value,
+        start=start_time.isoformat(),
+    )
+
+    if booking_status == BookingStatus.CONFIRMED:
+        await manager.broadcast(
+            start_time.date().isoformat(),
+            {
+                "type": "slot_update",
+                "start_time": start_time.isoformat(),
+                "staff_id": str(staff_id),
+                "status": "booked",
+            },
+        )
+        if customer_email:
+            await notify_booking_confirmed(
+                BookingInfo(
+                    booking_id=str(booking.id),
+                    customer_name=customer_name,
+                    customer_email=customer_email,
+                    customer_phone=customer_phone,
+                    service_name=service.name,
+                    start_time=start_time,
+                    end_time=end_time,
+                    duration_minutes=service.duration_minutes,
+                )
+            )
 
     return booking
 
@@ -536,14 +687,15 @@ async def reschedule_booking(
 
     # Same-day single-booking — but exclude THIS booking from the count, since
     # we're moving it (not adding a second one).
-    other_same_day = await repo.count_confirmed_for_user_on_date(
-        booking.user_id, new_salon_day, exclude_id=booking_id
-    )
-    if other_same_day > 0:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="You already have another booking on this day. Cancel it first or pick a different day.",
+    if booking.user_id is not None:
+        other_same_day = await repo.count_confirmed_for_user_on_date(
+            booking.user_id, new_salon_day, exclude_id=booking_id
         )
+        if other_same_day > 0:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="You already have another booking on this day. Cancel it first or pick a different day.",
+            )
 
     # Default to keeping the same stylist. Callers may override (e.g. an
     # admin moving a booking onto a different chair) by passing new_staff_id.
@@ -577,7 +729,7 @@ async def reschedule_booking(
     # (other than this booking's owner), respect that hold.
     hold_key = slot_hold_key(target_staff_id, new_start_time)
     holder = await redis.get(hold_key)
-    if holder and holder != str(booking.user_id):
+    if holder and (booking.user_id is None or holder != str(booking.user_id)):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="That time is held by another customer.",
@@ -601,7 +753,7 @@ async def reschedule_booking(
     # If this user was holding the new slot themselves (e.g. they reserved it
     # in a fresh BookPage flow before deciding to reschedule instead), free
     # the hold now that the booking has been confirmed onto it.
-    if holder == str(booking.user_id):
+    if booking.user_id is not None and holder == str(booking.user_id):
         await redis.delete(hold_key)
 
     refreshed = await repo.get_with_details(booking_id)
@@ -625,13 +777,16 @@ async def reschedule_booking(
         {"type": "slot_update", "start_time": new_start_time.isoformat(), "status": "booked"},
     )
 
-    if refreshed and refreshed.user and refreshed.service:
+    customer_name = refreshed.user.name if refreshed and refreshed.user else refreshed.customer_name if refreshed else None
+    customer_email = refreshed.user.email if refreshed and refreshed.user else refreshed.customer_email if refreshed else None
+    customer_phone = refreshed.user.phone if refreshed and refreshed.user else refreshed.customer_phone if refreshed else None
+    if refreshed and refreshed.service and customer_name and customer_email:
         await notify_booking_confirmed(
             BookingInfo(
                 booking_id=str(refreshed.id),
-                customer_name=refreshed.user.name,
-                customer_email=refreshed.user.email,
-                customer_phone=refreshed.user.phone,
+                customer_name=customer_name,
+                customer_email=customer_email,
+                customer_phone=customer_phone,
                 service_name=refreshed.service.name,
                 start_time=_utc(refreshed.start_time),
                 end_time=_utc(refreshed.end_time),
@@ -721,13 +876,16 @@ async def cancel_booking(
         "status": "available",
     })
 
-    if booking.user and booking.service:
+    customer_name = booking.user.name if booking.user else booking.customer_name
+    customer_email = booking.user.email if booking.user else booking.customer_email
+    customer_phone = booking.user.phone if booking.user else booking.customer_phone
+    if booking.service and customer_name and customer_email:
         await notify_booking_cancelled(
             BookingInfo(
                 booking_id=str(booking.id),
-                customer_name=booking.user.name,
-                customer_email=booking.user.email,
-                customer_phone=booking.user.phone,
+                customer_name=customer_name,
+                customer_email=customer_email,
+                customer_phone=customer_phone,
                 service_name=booking.service.name,
                 start_time=_utc(booking.start_time),
                 end_time=_utc(booking.end_time),

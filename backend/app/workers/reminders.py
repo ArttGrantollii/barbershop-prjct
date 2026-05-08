@@ -74,17 +74,20 @@ async def send_due_reminders() -> int:
 
         sent = 0
         for booking in bookings:
-            if not booking.user or not booking.service:
-                booking.reminder_error = "missing user or service relation"
+            customer_name = booking.user.name if booking.user else booking.customer_name
+            customer_email = booking.user.email if booking.user else booking.customer_email
+            customer_phone = booking.user.phone if booking.user else booking.customer_phone
+            if not booking.service or not customer_name or not customer_email:
+                booking.reminder_error = "missing customer or service relation"
                 logger.warning("reminder_skipped_missing_relation", booking_id=str(booking.id))
                 continue
             try:
                 delivered = await notify_booking_reminder(
                     BookingInfo(
                         booking_id=str(booking.id),
-                        customer_name=booking.user.name,
-                        customer_email=booking.user.email,
-                        customer_phone=booking.user.phone,
+                        customer_name=customer_name,
+                        customer_email=customer_email,
+                        customer_phone=customer_phone,
                         service_name=booking.service.name,
                         start_time=_utc(booking.start_time),
                         end_time=_utc(booking.end_time),
