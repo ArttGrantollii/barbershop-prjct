@@ -1,28 +1,51 @@
+import { lazy, Suspense } from "react"
+import type { ReactNode } from "react"
 import { Navigate, Route, Routes, useLocation } from "react-router-dom"
 import { AnimatePresence } from "framer-motion"
 import { AuthProvider } from "@/context/AuthContext"
 import { Navbar } from "@/components/layout/Navbar"
 import { ProtectedRoute } from "@/components/ProtectedRoute"
-import { AdminLayout } from "@/components/admin/AdminLayout"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { PageTransition } from "@/components/ui/PageTransition"
-import HomePage from "@/pages/HomePage"
-import LoginPage from "@/pages/LoginPage"
-import RegisterPage from "@/pages/RegisterPage"
-import ForgotPasswordPage from "@/pages/ForgotPasswordPage"
-import ResetPasswordPage from "@/pages/ResetPasswordPage"
-import VerifyEmailPage from "@/pages/VerifyEmailPage"
-import BookPage from "@/pages/BookPage"
-import BookingConfirmationPage from "@/pages/BookingConfirmationPage"
-import MyBookingsPage from "@/pages/MyBookingsPage"
-import ProfilePage from "@/pages/ProfilePage"
-import AdminDashboardPage from "@/pages/admin/AdminDashboardPage"
-import AdminBookingsPage from "@/pages/admin/AdminBookingsPage"
-import AdminWaitlistPage from "@/pages/admin/AdminWaitlistPage"
-import AdminServicesPage from "@/pages/admin/AdminServicesPage"
-import AdminStaffPage from "@/pages/admin/AdminStaffPage"
-import AdminHoursPage from "@/pages/admin/AdminHoursPage"
-import AdminBlockedDatesPage from "@/pages/admin/AdminBlockedDatesPage"
+
+const HomePage = lazy(() => import("@/pages/HomePage"))
+const LoginPage = lazy(() => import("@/pages/LoginPage"))
+const RegisterPage = lazy(() => import("@/pages/RegisterPage"))
+const ForgotPasswordPage = lazy(() => import("@/pages/ForgotPasswordPage"))
+const ResetPasswordPage = lazy(() => import("@/pages/ResetPasswordPage"))
+const VerifyEmailPage = lazy(() => import("@/pages/VerifyEmailPage"))
+const BookPage = lazy(() => import("@/pages/BookPage"))
+const BookingConfirmationPage = lazy(() => import("@/pages/BookingConfirmationPage"))
+const MyBookingsPage = lazy(() => import("@/pages/MyBookingsPage"))
+const ProfilePage = lazy(() => import("@/pages/ProfilePage"))
+const AdminLayout = lazy(() => import("@/components/admin/AdminLayout").then((mod) => ({ default: mod.AdminLayout })))
+const AdminDashboardPage = lazy(() => import("@/pages/admin/AdminDashboardPage"))
+const AdminBookingsPage = lazy(() => import("@/pages/admin/AdminBookingsPage"))
+const AdminWaitlistPage = lazy(() => import("@/pages/admin/AdminWaitlistPage"))
+const AdminServicesPage = lazy(() => import("@/pages/admin/AdminServicesPage"))
+const AdminStaffPage = lazy(() => import("@/pages/admin/AdminStaffPage"))
+const AdminHoursPage = lazy(() => import("@/pages/admin/AdminHoursPage"))
+const AdminBlockedDatesPage = lazy(() => import("@/pages/admin/AdminBlockedDatesPage"))
+
+function RouteSuspense({ children }: { children: ReactNode }) {
+  return (
+    <Suspense
+      fallback={
+        <div className="container py-16">
+          <div className="h-px w-24 overflow-hidden bg-border">
+            <div className="h-full w-12 animate-pulse bg-foreground" />
+          </div>
+        </div>
+      }
+    >
+      {children}
+    </Suspense>
+  )
+}
+
+function Page({ children }: { children: ReactNode }) {
+  return <RouteSuspense><PageTransition>{children}</PageTransition></RouteSuspense>
+}
 
 function AnimatedRoutes() {
   const location = useLocation()
@@ -30,40 +53,40 @@ function AnimatedRoutes() {
   return (
     <AnimatePresence mode="wait">
       <Routes location={location} key={location.pathname}>
-        <Route path="/" element={<PageTransition><HomePage /></PageTransition>} />
-        <Route path="/login" element={<PageTransition><LoginPage /></PageTransition>} />
-        <Route path="/register" element={<PageTransition><RegisterPage /></PageTransition>} />
-        <Route path="/forgot-password" element={<PageTransition><ForgotPasswordPage /></PageTransition>} />
-        <Route path="/reset-password" element={<PageTransition><ResetPasswordPage /></PageTransition>} />
-        <Route path="/verify-email" element={<PageTransition><VerifyEmailPage /></PageTransition>} />
+        <Route path="/" element={<Page><HomePage /></Page>} />
+        <Route path="/login" element={<Page><LoginPage /></Page>} />
+        <Route path="/register" element={<Page><RegisterPage /></Page>} />
+        <Route path="/forgot-password" element={<Page><ForgotPasswordPage /></Page>} />
+        <Route path="/reset-password" element={<Page><ResetPasswordPage /></Page>} />
+        <Route path="/verify-email" element={<Page><VerifyEmailPage /></Page>} />
         <Route
           path="/book"
-          element={<ProtectedRoute customerOnly><PageTransition><BookPage /></PageTransition></ProtectedRoute>}
+          element={<ProtectedRoute customerOnly><Page><BookPage /></Page></ProtectedRoute>}
         />
         <Route
           path="/my-bookings"
-          element={<ProtectedRoute customerOnly><PageTransition><MyBookingsPage /></PageTransition></ProtectedRoute>}
+          element={<ProtectedRoute customerOnly><Page><MyBookingsPage /></Page></ProtectedRoute>}
         />
         <Route
           path="/bookings/:id/confirmation"
-          element={<ProtectedRoute customerOnly><PageTransition><BookingConfirmationPage /></PageTransition></ProtectedRoute>}
+          element={<ProtectedRoute customerOnly><Page><BookingConfirmationPage /></Page></ProtectedRoute>}
         />
         <Route
           path="/profile"
-          element={<ProtectedRoute><PageTransition><ProfilePage /></PageTransition></ProtectedRoute>}
+          element={<ProtectedRoute><Page><ProfilePage /></Page></ProtectedRoute>}
         />
         <Route
           path="/admin"
-          element={<ProtectedRoute adminOnly><AdminLayout /></ProtectedRoute>}
+          element={<ProtectedRoute adminOnly><RouteSuspense><AdminLayout /></RouteSuspense></ProtectedRoute>}
         >
           <Route index element={<Navigate to="/admin/dashboard" replace />} />
-          <Route path="dashboard" element={<PageTransition><AdminDashboardPage /></PageTransition>} />
-          <Route path="bookings" element={<PageTransition><AdminBookingsPage /></PageTransition>} />
-          <Route path="waitlist" element={<PageTransition><AdminWaitlistPage /></PageTransition>} />
-          <Route path="services" element={<PageTransition><AdminServicesPage /></PageTransition>} />
-          <Route path="staff" element={<PageTransition><AdminStaffPage /></PageTransition>} />
-          <Route path="hours" element={<PageTransition><AdminHoursPage /></PageTransition>} />
-          <Route path="blocked-dates" element={<PageTransition><AdminBlockedDatesPage /></PageTransition>} />
+          <Route path="dashboard" element={<Page><AdminDashboardPage /></Page>} />
+          <Route path="bookings" element={<Page><AdminBookingsPage /></Page>} />
+          <Route path="waitlist" element={<Page><AdminWaitlistPage /></Page>} />
+          <Route path="services" element={<Page><AdminServicesPage /></Page>} />
+          <Route path="staff" element={<Page><AdminStaffPage /></Page>} />
+          <Route path="hours" element={<Page><AdminHoursPage /></Page>} />
+          <Route path="blocked-dates" element={<Page><AdminBlockedDatesPage /></Page>} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
