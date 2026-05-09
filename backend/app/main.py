@@ -4,14 +4,16 @@ from typing import AsyncGenerator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from sqlalchemy import text
 
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.limiter import limiter
 from app.core.logging_config import configure_logging
-from app.db.redis import close_redis
+from app.db.redis import close_redis, get_redis
 from app.db.session import engine
 from app.workers.reminders import start_reminder_loop
 
@@ -113,3 +115,27 @@ app.include_router(api_router, prefix=settings.API_V1_STR)
 @app.get("/health", tags=["health"])
 async def health() -> dict:
     return {"status": "healthy", "service": settings.PROJECT_NAME}
+
+
+@app.get("/ready", tags=["health"])
+async def readiness():
+    checks = {"database": "unknown", "redis": "unknown"}
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        checks["database"] = "ok"
+
+        redis = await get_redis()
+        await redis.ping()
+        checks["redis"] = "ok"
+    except Exception as exc:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "not_ready",
+                "service": settings.PROJECT_NAME,
+                "checks": checks,
+                "error": exc.__class__.__name__,
+            },
+        )
+    return {"status": "ready", "service": settings.PROJECT_NAME, "checks": checks}

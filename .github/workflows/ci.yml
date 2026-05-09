@@ -98,6 +98,8 @@ jobs:
       POSTGRES_USER: vendos
       POSTGRES_PASSWORD: ci-postgres-password
       POSTGRES_DB: vendos_salon
+      DOMAIN: localhost
+      TLS_EMAIL: ci@example.com
       SECRET_KEY: ci-secret-key-ci-secret-key-ci-secret-key
       ALLOWED_ORIGINS: http://localhost:3000
       FRONTEND_URL: http://localhost:3000
@@ -112,6 +114,8 @@ jobs:
           POSTGRES_USER=${POSTGRES_USER}
           POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
           POSTGRES_DB=${POSTGRES_DB}
+          DOMAIN=${DOMAIN}
+          TLS_EMAIL=${TLS_EMAIL}
           SECRET_KEY=${SECRET_KEY}
           ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
           FRONTEND_URL=${FRONTEND_URL}

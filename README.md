@@ -41,6 +41,7 @@ Services:
 - Frontend: `http://localhost:3000`
 - Backend API: `http://localhost:8000`
 - Health check: `http://localhost:8000/health`
+- Readiness check: `http://localhost:8000/ready`
 - API schema: `http://localhost:8000/api/v1/openapi.json`
 
 The backend container runs Alembic migrations on startup in the current dev configuration.
@@ -59,15 +60,16 @@ docker compose -f docker-compose.prod.yml up --build
 
 Production differences:
 
+- Caddy edge proxy terminates TLS on ports 80/443 and routes `/api`,
+  `/health`, and `/ready` to the backend.
 - backend runs Uvicorn without `--reload`
 - migrations run in a one-shot `migrate` service before the backend starts
 - frontend is built with `npm ci` and served by nginx
 - no source-code bind mounts
 - Postgres credentials are required by environment expansion
 
-For a real deployment, put TLS, domain routing, and any API/frontend reverse
-proxy in front of these containers. The production compose file is a hardened
-container baseline, not a complete cloud/platform deployment.
+See [docs/deployment.md](docs/deployment.md) for the AWS EC2 single-host
+deployment shape, security group rules, update process, and rollback notes.
 
 ## Validation
 
