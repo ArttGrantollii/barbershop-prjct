@@ -17,6 +17,13 @@ class ServiceCreate(BaseModel):
             raise ValueError("duration_minutes must be positive")
         return v
 
+    @field_validator("price")
+    @classmethod
+    def non_negative_price(cls, v: Decimal) -> Decimal:
+        if v < 0:
+            raise ValueError("price must be non-negative")
+        return v
+
 
 class ServiceUpdate(BaseModel):
     name: str | None = None
@@ -24,6 +31,20 @@ class ServiceUpdate(BaseModel):
     duration_minutes: int | None = None
     price: Decimal | None = None
     is_active: bool | None = None
+
+    @field_validator("duration_minutes")
+    @classmethod
+    def positive_duration(cls, v: int | None) -> int | None:
+        if v is not None and v <= 0:
+            raise ValueError("duration_minutes must be positive")
+        return v
+
+    @field_validator("price")
+    @classmethod
+    def non_negative_price(cls, v: Decimal | None) -> Decimal | None:
+        if v is not None and v < 0:
+            raise ValueError("price must be non-negative")
+        return v
 
 
 class ServiceResponse(BaseModel):

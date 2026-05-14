@@ -184,11 +184,16 @@ async def update_business_hours(
     if not current:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No hours configured for this day")
     patch = body.model_dump(exclude_none=True)
+    open_time = patch.get("open_time", current.open_time)
+    close_time = patch.get("close_time", current.close_time)
+    is_closed = patch.get("is_closed", current.is_closed)
+    if not is_closed and close_time <= open_time:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="close_time must be after open_time")
     return await repo.upsert_hours(
         day_of_week=day_of_week,
-        open_time=patch.get("open_time", current.open_time),
-        close_time=patch.get("close_time", current.close_time),
-        is_closed=patch.get("is_closed", current.is_closed),
+        open_time=open_time,
+        close_time=close_time,
+        is_closed=is_closed,
     )
 
 
@@ -206,6 +211,16 @@ async def add_blocked_date(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin),
 ):
+    bookings = await BookingRepository(db).get_for_date(body.date)
+    if bookings:
+        count = len(bookings)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Cannot block this date: it has {count} confirmed booking"
+                f"{'s' if count != 1 else ''}. Reschedule or cancel them first."
+            ),
+        )
     return await BusinessRepository(db).create_blocked_date(body.date, body.reason)
 
 

@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "lib": ["ES2022", "DOM"],
+    "rootDir": ".",
+    "outDir": ".tmp/api-url-test"
+  },
+  "include": [
+    "src/lib/apiUrl.ts",
+    "src/lib/datetime.ts",
+    "scripts/check-api-url.ts",
+    "scripts/check-datetime.ts"
+  ]
+}

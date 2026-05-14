@@ -5,7 +5,7 @@ import { Calendar, CalendarClock, Clock, ChevronLeft, ChevronRight, History, Plu
 import { useToast } from "@/hooks/use-toast"
 import { useBusinessInfo } from "@/hooks/useBusinessInfo"
 import { RescheduleDialog } from "@/components/RescheduleDialog"
-import { salonDateShort, salonTime } from "@/lib/datetime"
+import { salonDateShort, salonDateTimeInputToUtcIso, salonTime } from "@/lib/datetime"
 import { cn } from "@/lib/utils"
 import api from "@/lib/api"
 import type { Booking, BookingAuditEvent, BookingPage, BookingStatus, Service, StaffWithServices } from "@/types"
@@ -31,6 +31,31 @@ function StatusLabel({ status }: { status: BookingStatus }) {
     )}>
       {status === "no_show" ? "no-show" : status}
     </span>
+  )
+}
+
+function formatAuditValue(value: unknown): string {
+  if (value === null || value === undefined) return "None"
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value)
+  }
+  return JSON.stringify(value, null, 2)
+}
+
+function AuditValueBlock({ label, values }: { label: string; values: Record<string, unknown> | null }) {
+  if (!values || Object.keys(values).length === 0) return null
+  return (
+    <div className="border border-border px-3 py-2">
+      <p className="text-[10px] tracking-widest uppercase text-muted-foreground mb-2">{label}</p>
+      <dl className="grid gap-2">
+        {Object.entries(values).map(([key, value]) => (
+          <div key={key} className="grid sm:grid-cols-[140px_1fr] gap-1 text-xs">
+            <dt className="uppercase tracking-widest text-muted-foreground">{key.replace(/_/g, " ")}</dt>
+            <dd className="font-mono whitespace-pre-wrap break-words">{formatAuditValue(value)}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
   )
 }
 
@@ -152,7 +177,7 @@ export default function AdminBookingsPage() {
 
   const createMutation = useMutation({
     mutationFn: () => {
-      const start_time = new Date(`${createForm.date}T${createForm.time}`).toISOString()
+      const start_time = salonDateTimeInputToUtcIso(`${createForm.date}T${createForm.time}`, tz)
       return api.post("/api/v1/admin/bookings", {
         service_id: createForm.service_id,
         staff_id: createForm.staff_id,
@@ -433,6 +458,12 @@ export default function AdminBookingsPage() {
                     {booking.cancellation_reason && (
                       <p className="text-xs text-muted-foreground italic">{booking.cancellation_reason}</p>
                     )}
+                    {booking.notes && (
+                      <p className="text-xs text-muted-foreground">
+                        <span className="uppercase tracking-widest text-[10px] mr-2">Notes</span>
+                        {booking.notes}
+                      </p>
+                    )}
                   </div>
 
                   {booking.status === "confirmed" && (
@@ -487,15 +518,31 @@ export default function AdminBookingsPage() {
                         <p className="text-xs text-muted-foreground tracking-widest uppercase">No history recorded.</p>
                       ) : (
                         <div className="grid gap-2">
-                          {auditEvents.map((event) => (
-                            <div key={event.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-xs border border-border px-3 py-2">
-                              <div className="flex flex-wrap items-center gap-3">
-                                <span className="font-medium uppercase tracking-widest">{event.action.replace(/_/g, " ")}</span>
-                                <span className="text-muted-foreground uppercase tracking-widest">{event.actor_role}</span>
+                          {auditEvents.map((event) => {
+                            const hasDetails = !!event.previous_values || !!event.new_values
+                            return (
+                              <div key={event.id} className="text-xs border border-border px-3 py-2">
+                                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                                  <div className="flex flex-wrap items-center gap-3">
+                                    <span className="font-medium uppercase tracking-widest">{event.action.replace(/_/g, " ")}</span>
+                                    <span className="text-muted-foreground uppercase tracking-widest">{event.actor_role}</span>
+                                  </div>
+                                  <span className="text-muted-foreground tabular-nums">{salonDateShort(parseISO(event.created_at), tz)} {salonTime(parseISO(event.created_at), tz)}</span>
+                                </div>
+                                {hasDetails && (
+                                  <details className="mt-3">
+                                    <summary className="cursor-pointer text-[10px] tracking-widest uppercase text-muted-foreground hover:text-foreground transition-colors">
+                                      Details
+                                    </summary>
+                                    <div className="grid md:grid-cols-2 gap-2 mt-3">
+                                      <AuditValueBlock label="Previous" values={event.previous_values} />
+                                      <AuditValueBlock label="New" values={event.new_values} />
+                                    </div>
+                                  </details>
+                                )}
                               </div>
-                              <span className="text-muted-foreground tabular-nums">{salonDateShort(parseISO(event.created_at), tz)} {salonTime(parseISO(event.created_at), tz)}</span>
-                            </div>
-                          ))}
+                            )
+                          })}
                         </div>
                       )}
                     </div>

@@ -50,11 +50,28 @@ local validation plus GitHub Actions CI.
 - Consider manual chunks for large shared libraries.
 - Keep build passing and verify no visible loading regressions.
 
+## Completed Remediation Plan
+
+The senior-engineer remediation plan is tracked in
+[open-issues.md](open-issues.md). All active launch-hardening phases are now
+complete and documented there with their verification gates.
+
+Completed phase order:
+
+1. Production API URL construction.
+2. Email verification policy.
+3. Admin salon-timezone input.
+4. User-path test coverage.
+5. Session logout correctness.
+6. Admin operational completeness.
+7. Launch operations and scaling boundary.
+
 ## Next Decision
 
-- Run a full manual product smoke test against the local app or a staging host.
 - Configure GitHub branch protection so CI checks are required before merging.
 - Prepare production secrets, DNS, AWS host, and database backup process.
+- Decide whether the client actually wants customer-facing waitlist before
+  doing any public waitlist work.
 
 ## Future Optional: Payments, Deposits, and No-Show Policy
 
