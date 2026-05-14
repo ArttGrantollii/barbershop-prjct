@@ -86,3 +86,12 @@ async def get_current_customer(current_user: User = Depends(get_current_active_u
             detail="Admins cannot make or hold bookings",
         )
     return current_user
+
+
+async def get_current_verified_customer(current_user: User = Depends(get_current_customer)) -> User:
+    if not current_user.is_email_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Please verify your email before booking.",
+        )
+    return current_user

@@ -5,6 +5,7 @@ import { Check, Clock, Timer } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { useSlotWebSocket } from "@/hooks/useSlotWebSocket"
 import { useBusinessInfo } from "@/hooks/useBusinessInfo"
+import { useAuth } from "@/context/AuthContext"
 import { salonDateLong, salonDayKey, salonTime, salonTzAbbr } from "@/lib/datetime"
 import { cn } from "@/lib/utils"
 import api from "@/lib/api"
@@ -67,6 +68,7 @@ export default function BookPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { user } = useAuth()
 
   // Component layout follows a strict order so future edits don't reintroduce
   // temporal-dead-zone bugs:
@@ -101,6 +103,7 @@ export default function BookPage() {
   const tz = business?.timezone
   const tzAbbr = salonTzAbbr(tz)
   const today = salonDayKey(new Date(), tz)
+  const needsEmailVerification = !!user && !user.is_email_verified
 
   // 4. data queries
   const { data: services, isLoading: servicesLoading } = useQuery<Service[]>({
@@ -284,6 +287,15 @@ export default function BookPage() {
 
       <StepBar step={step} />
 
+      {needsEmailVerification && (
+        <div className="mb-8 border border-border bg-secondary px-5 py-4">
+          <p className="text-xs tracking-widest uppercase text-foreground">Verify your email before booking.</p>
+          <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
+            Check your inbox for the verification link, then return here to reserve an appointment.
+          </p>
+        </div>
+      )}
+
       {/* step 1 — service */}
       {step === 1 && (
         <div>
@@ -442,7 +454,7 @@ export default function BookPage() {
               Back
             </button>
             <button
-              disabled={!selectedSlot || holdMutation.isPending}
+              disabled={!selectedSlot || holdMutation.isPending || needsEmailVerification}
               onClick={() => {
                 if (!selectedService || !selectedSlot) return
                 holdMutation.mutate({
@@ -518,7 +530,7 @@ export default function BookPage() {
                 releaseHeldSlot()
                 setStep(2)
               }}
-              disabled={bookMutation.isPending}
+              disabled={bookMutation.isPending || needsEmailVerification}
               className="px-8 py-3 text-xs tracking-widest uppercase border border-border hover:bg-secondary transition-colors disabled:opacity-50"
             >
               Back

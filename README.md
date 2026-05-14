@@ -26,7 +26,7 @@ python -c "import secrets; print(secrets.token_hex(32))"
 Important local values:
 
 - `SALON_TIMEZONE`: IANA timezone for business hours and customer-facing dates.
-- `FIRST_ADMIN_EMAIL` / `FIRST_ADMIN_PASSWORD`: optional first admin seed on backend startup.
+- `FIRST_ADMIN_EMAIL` / `FIRST_ADMIN_PASSWORD`: optional first admin created by the explicit seed command.
 - `ALLOWED_ORIGINS`: comma-separated browser origins allowed by CORS.
 - `NOTIFICATIONS_BACKEND`: `console` for local development, `aws` for SES/SNS notification sending.
 
@@ -44,7 +44,9 @@ Services:
 - Readiness check: `http://localhost:8000/ready`
 - API schema: `http://localhost:8000/api/v1/openapi.json`
 
-The backend container runs Alembic migrations on startup in the current dev configuration.
+The backend dev container runs Alembic migrations and `python -m app.ops.seed`
+before starting Uvicorn. The seed command creates default hours/services and an
+optional first admin only when those records do not already exist.
 
 The default `docker-compose.yml` is for development. It uses bind mounts,
 Vite dev server, and backend autoreload.
@@ -64,6 +66,8 @@ Production differences:
   `/health`, and `/ready` to the backend.
 - backend runs Uvicorn without `--reload`
 - migrations run in a one-shot `migrate` service before the backend starts
+- default data and optional first admin are created by a one-shot `seed` service
+  before the backend starts
 - frontend is built with `npm ci` and served by nginx
 - no source-code bind mounts
 - Postgres credentials are required by environment expansion
@@ -94,6 +98,22 @@ npm.cmd run build
 
 On Windows PowerShell, prefer `npm.cmd` over `npm` if the `npm.ps1` shim hits permission issues.
 
+Frontend smoke checks:
+
+```powershell
+cd frontend
+npm.cmd run test:api-url
+npm.cmd run test:datetime
+npm.cmd run test:e2e
+```
+
+The e2e smoke test uses Playwright. On a fresh machine, install the browser once:
+
+```powershell
+cd frontend
+npx playwright install chromium
+```
+
 ## Known Local Tooling Notes
 
 - Local Python may not be installed on every development machine; Docker is the reliable backend test path.
@@ -107,10 +127,13 @@ npm.cmd ci
 
 ## Development Priorities
 
-Current near-term engineering plan:
+Current near-term engineering plan lives in
+[docs/open-issues.md](docs/open-issues.md). Work it phase by phase and run each
+phase's verification gate before starting the next one.
 
-1. Make the multi-staff feature complete in the frontend: admin staff management, service assignment, stylist picker, and staff display on bookings.
-2. Move dashboard metrics to backend aggregate endpoints.
-3. Fix reminder delivery accounting so failed sends are not counted as successful.
-4. Add real API/database/Redis integration tests around booking flows.
-5. Split dev and production deployment configuration.
+Immediate priority:
+
+1. Fix production API URL construction.
+2. Enforce the email verification policy for booking mutations.
+3. Fix admin salon-timezone input conversion.
+4. Add user-path route and browser smoke tests.

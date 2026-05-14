@@ -75,6 +75,7 @@ def mock_user(user_id: uuid.UUID) -> MagicMock:
     user.phone = "1234567890"
     user.role = UserRole.CUSTOMER
     user.is_active = True
+    user.is_email_verified = True
     return user
 
 
@@ -82,7 +83,12 @@ def mock_user(user_id: uuid.UUID) -> MagicMock:
 def future_start() -> datetime:
     """A start time safely in the future."""
     from datetime import timedelta
-    return datetime.now(timezone.utc) + timedelta(hours=2)
+    return (datetime.now(timezone.utc) + timedelta(days=2)).replace(
+        hour=12,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
 
 
 @pytest.fixture

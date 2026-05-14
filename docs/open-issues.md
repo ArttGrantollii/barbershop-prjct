@@ -1,200 +1,254 @@
-# Open Issues To Resume
+# Open Issues Remediation Plan
 
-Last updated: 2026-05-11
+Last updated: 2026-05-14
 
-This file captures the remaining issues found in the senior-engineer review. Use this as the next work queue when coming back to the project.
+This file is the active engineering worklist for the senior-engineer review.
+Work one phase at a time. Do not begin the next phase until the current phase's
+implementation and verification gate are complete.
 
-## Critical
+## Execution Rules
 
-### 1. Production API Routing Is Broken
+- Keep each phase narrowly scoped to the issue it is meant to close.
+- Add or update tests in the same phase as the fix.
+- Run the phase's verification gate before moving on.
+- Update this file when a phase changes state.
+- Prefer small, reviewable changes over broad refactors.
 
-`VITE_API_URL=/api` plus frontend calls like `/api/v1/services` produces `/api/api/v1/services`.
+## Phase 1: Production API URL Construction
 
-This was verified directly with Axios. The doubled path returns `404`.
+Status: Complete
 
-References:
+Problem:
 
-- `frontend/src/lib/api.ts` line 3
-- `frontend/src/hooks/useSlotWebSocket.ts` line 33
-- `.env.prod.example` line 33
-- `docker-compose.prod.yml` line 84
-
-What to fix:
-
-- Decide whether `VITE_API_URL` means API origin only or full API prefix.
-- Make frontend URL construction consistent for HTTP and WebSocket calls.
-- Add a production-config test so `/api/api/v1/...` cannot come back.
-
-### 2. Email Verification Is Implemented But Not Enforced
-
-Users can register, auto-login, and book without verifying email.
-
-If the business relies on email reminders, password recovery, and booking trust, this is a real issue.
+`VITE_API_URL=/api` plus frontend calls like `/api/v1/services` produces
+`/api/api/v1/services` in the production build. This breaks HTTP calls,
+refresh-token calls, and WebSocket slot updates behind the Caddy edge proxy.
 
 References:
 
-- `frontend/src/context/AuthContext.tsx` line 48
-- `backend/app/core/dependencies.py` line 82
-- `backend/app/api/v1/endpoints/auth.py` line 81
+- `frontend/src/lib/api.ts`
+- `frontend/src/hooks/useSlotWebSocket.ts`
+- `.env.prod.example`
+- `docker-compose.prod.yml`
 
-What to fix:
+Fix:
 
-- Decide the policy: block booking until email is verified, or allow booking but visibly warn.
-- If enforcing, add a verified-customer dependency for booking/hold/reschedule routes.
-- Update frontend registration flow so users understand they need to verify.
-- Add tests for unverified versus verified booking behavior.
+- Normalize `VITE_API_URL` before using it as an HTTP or WebSocket base.
+- Support both local direct-backend config (`http://localhost:8000`) and
+  production same-domain config (`/api`).
+- Add a regression check that proves `/api` does not become `/api/api/v1`.
 
-## High Priority
+Verification gate:
 
-### 3. Admin-Created Dates And Times Use The Admin Browser Timezone
+- `cd frontend && npm.cmd run test:api-url`
+- `cd frontend && npm.cmd run build`
+- `docker compose exec backend python -m pytest`
 
-Manual bookings, waitlist conversion, and staff blocked times use `new Date(...).toISOString()`.
+Completed verification:
 
-If the salon timezone differs from the admin device timezone, bookings can be stored at the wrong time.
+- 2026-05-14: `npm.cmd run test:api-url` passed.
+- 2026-05-14: `npm.cmd run build` passed.
+- 2026-05-14: `docker compose exec backend python -m pytest` passed, 58 tests.
 
-References:
+## Phase 2: Email Verification Policy
 
-- `frontend/src/pages/admin/AdminBookingsPage.tsx` line 155
-- `frontend/src/pages/admin/AdminWaitlistPage.tsx` line 80
-- `frontend/src/pages/admin/AdminStaffPage.tsx` line 52
+Status: Complete
 
-What to fix:
+Problem:
 
-- Treat admin-entered date/time as salon-local time.
-- Add a helper that converts salon-local date/time into the correct UTC instant.
-- Use that helper in admin booking, waitlist booking, and staff blocked time forms.
-- Add tests for an admin browser timezone that differs from `SALON_TIMEZONE`.
+Email verification tokens, pages, and user state exist, but unverified users can
+still hold slots, create bookings, cancel, and reschedule. The product needs an
+explicit policy.
 
-### 4. Waitlist Is Admin-Only
+Decision:
 
-Backend and admin UI support waitlist, but customers cannot join a waitlist when no slots are available.
+For launch, enforce verified email before customer booking mutations. Customers
+may still view public services and availability before verification.
 
-If waitlist is meant to serve customers, a customer endpoint and customer UI are missing.
+Fix:
 
-References:
+- Add a verified-customer dependency on customer hold, book, and reschedule
+  routes.
+- Keep read-only booking views, hold release, and cancellation available to
+  authenticated customers so cleanup and existing-appointment management remain
+  possible.
+- Keep admin actions independent from customer email verification.
+- Update the customer-facing booking UX so unverified customers understand why
+  booking controls are unavailable.
+- Add backend tests for unverified versus verified customer behavior.
 
-- `backend/app/api/v1/endpoints/admin.py` line 560
-- `frontend/src/pages/admin/AdminWaitlistPage.tsx` line 30
+Verification gate:
 
-What to fix:
+- `docker compose exec backend python -m pytest`
+- `cd frontend && npm.cmd run build`
 
-- Decide whether customer waitlist is needed for launch.
-- If yes, add customer-facing waitlist endpoint.
-- Add UI on the booking page when no slots are available.
-- Let customers choose service, optional stylist, preferred date, and notes.
-- Add admin visibility into customer-created waitlist entries.
+Completed verification:
 
-### 5. Frontend Logout Bypasses Backend Logout
+- 2026-05-14: `docker compose exec backend python -m pytest` passed, 61 tests.
+- 2026-05-14: `npm.cmd run build` passed.
 
-The backend has a logout endpoint, but frontend logout only clears `localStorage`.
+## Phase 3: Admin Salon-Timezone Input
 
-That means refresh/access token blacklist logic is unused during normal logout.
+Status: Complete
 
-References:
+Problem:
 
-- `backend/app/api/v1/endpoints/auth.py` line 182
-- `frontend/src/context/AuthContext.tsx` line 52
+Admin-created bookings, waitlist conversions, and staff blocked times convert
+browser-local date/time input with `new Date(...).toISOString()`. If the admin
+browser timezone differs from `SALON_TIMEZONE`, the stored UTC instant is wrong.
 
-What to fix:
+Fix:
 
-- Update frontend logout to call `POST /api/v1/auth/logout`.
-- Send the current refresh token in the body.
-- Keep local token clearing as fallback even if the network call fails.
-- Add tests for refresh token blacklist behavior after logout.
+- Add a frontend helper that converts salon-local date/time input to a UTC ISO
+  instant.
+- Use it in admin booking creation, waitlist booking, and staff blocked-time
+  creation.
+- Add tests for a browser timezone that differs from the salon timezone.
 
-### 6. Tests Do Not Cover The App Like Users Use It
+Verification gate:
 
-Service tests are good, and the DB constraint integration test is valuable. But there are no FastAPI route tests for full auth/booking/admin flows, and no browser/e2e tests.
+- `cd frontend && npm.cmd run test:datetime`
+- `cd frontend && npm.cmd run build`
+- `docker compose exec backend python -m pytest`
 
-This is why the production `/api/api/v1` issue survived.
+Completed verification:
 
-References:
+- 2026-05-14: `npm.cmd run test:datetime` passed.
+- 2026-05-14: `npm.cmd run build` passed.
+- 2026-05-14: `docker compose exec backend python -m pytest` passed, 61 tests.
 
-- `.github/workflows/ci.yml` line 70
+## Phase 4: User-Path Test Coverage
 
-What to fix:
+Status: Complete
 
-- Add FastAPI route tests for:
-  - register/login/refresh/logout
-  - customer hold and booking
-  - customer cancel/reschedule
-  - admin booking creation
-  - admin waitlist conversion
-  - audit history access
-- Add at least one frontend smoke/e2e test for the customer booking flow.
-- Add a production URL construction test or production build smoke test.
+Problem:
 
-## Medium Priority
+Backend service tests are strong, but the app lacks route-level tests for full
+auth/booking/admin flows and has no browser-level booking smoke test.
 
-### 7. Audit Trail Backend Is Richer Than The UI
+Fix:
 
-Backend stores previous/new values, but admin only sees action, role, and timestamp.
+- Add FastAPI route tests for register/login/refresh/logout, hold/book,
+  cancel/reschedule, admin booking creation, waitlist conversion, and audit
+  history access.
+- Add one deterministic Playwright customer booking smoke test with mocked API
+  responses. The backend route suite covers the API wiring; the browser smoke
+  covers the frontend booking journey and production-style `/api` URL base.
+- Add the frontend smoke test to CI.
 
-For disputes or debugging, that is not enough.
+Verification gate:
 
-References:
+- `docker compose exec backend python -m pytest`
+- `cd frontend && npm.cmd run test:e2e`
+- GitHub Actions runs the new frontend e2e command.
 
-- `backend/app/schemas/booking.py` line 113
-- `frontend/src/pages/admin/AdminBookingsPage.tsx` line 490
+Completed verification:
 
-What to fix:
+- 2026-05-14: `docker compose exec backend python -m pytest` passed, 72 tests.
+- 2026-05-14: `npm.cmd run test:e2e` passed, 1 browser smoke test.
+- 2026-05-14: `npm.cmd run test:api-url` passed.
+- 2026-05-14: `npm.cmd run test:datetime` passed.
+- 2026-05-14: `npm.cmd run build` passed.
 
-- Add an expandable audit detail view.
-- Show previous values and new values in readable form.
-- Include actor information when available.
+## Phase 5: Session Logout Correctness
 
-### 8. Booking Notes Are Captured But Not Surfaced Well
+Status: Complete
 
-Notes can matter in a barber workflow. They are stored, but the admin booking list does not make them visible/useful.
+Problem:
 
-References:
+The backend has refresh-token blacklist logic, but frontend logout currently
+only clears local storage.
 
-- `backend/app/schemas/booking.py` line 78
-- `frontend/src/pages/admin/AdminBookingsPage.tsx` line 433
+Fix:
 
-What to fix:
+- Call `POST /api/v1/auth/logout` with the current refresh token.
+- Clear local state even if the network call fails.
+- Add tests that prove a logged-out refresh token cannot be reused.
 
-- Show booking notes in the admin booking list or details panel.
-- Include notes in booking history if notes are changed later.
-- Consider making notes visible in customer booking confirmation.
+Verification gate:
 
-### 9. Validation Needs Tightening
+- `docker compose exec backend python -m pytest`
+- `cd frontend && npm.cmd run build`
 
-Service update can accept bad values unless DB/app behavior catches it later.
+Completed verification:
 
-Business hours update should explicitly reject `close_time <= open_time`.
+- 2026-05-15: `docker compose exec backend python -m pytest` passed, 72 tests.
+- 2026-05-15: `npm.cmd run test:e2e` passed, 2 browser smoke tests.
+- 2026-05-15: `npm.cmd run test:api-url` passed.
+- 2026-05-15: `npm.cmd run test:datetime` passed.
+- 2026-05-15: `npm.cmd run build` passed.
 
-Blocked dates should warn or block if confirmed bookings already exist that day.
+## Phase 6: Admin Operational Completeness
 
-References:
+Status: Complete
 
-- `backend/app/schemas/service.py` line 21
-- `backend/app/schemas/business.py` line 7
-- `backend/app/api/v1/endpoints/admin.py` line 173
+Problem:
 
-What to fix:
+Several admin workflows are implemented but under-surfaced or under-validated:
+audit details, booking notes, service update validation, business hours
+validation, and blocked-date conflict behavior.
 
-- Add validators for service update duration and price.
-- Add business hours range validation.
-- Add blocked-date conflict behavior for existing confirmed bookings.
-- Add tests for invalid service updates, invalid hours, and blocked-date conflicts.
+Fix:
 
-### 10. Production Scaling Assumptions Are Single-Instance
+- Show audit previous/new values in an expandable admin history view.
+- Surface booking notes in admin booking details or list rows.
+- Validate service update duration and price.
+- Reject invalid business hours where `close_time <= open_time`.
+- Warn or block when adding a blocked date that already has confirmed bookings.
 
-WebSockets are in-memory, and reminders run in-process.
+Verification gate:
 
-This is acceptable for the first single-EC2 deployment with one backend process. It is not acceptable for multiple backend replicas without Redis pub/sub and a dedicated worker.
+- `docker compose exec backend python -m pytest`
+- Frontend test command added as needed for admin UI behavior.
+- `cd frontend && npm.cmd run build`
 
-References:
+Completed verification:
 
-- `backend/app/core/websocket_manager.py` line 8
-- `backend/app/workers/reminders.py` line 132
+- 2026-05-15: `docker compose exec backend python -m pytest` passed, 75 tests.
+- 2026-05-15: `npm.cmd run test:e2e` passed, 2 browser smoke tests.
+- 2026-05-15: `npm.cmd run test:api-url` passed.
+- 2026-05-15: `npm.cmd run test:datetime` passed.
+- 2026-05-15: `npm.cmd run build` passed.
 
-What to fix:
+## Phase 7: Launch Operations And Scaling Boundary
 
-- For first launch, document that production must run one backend process/container.
-- Before horizontal scaling:
-  - Move WebSocket broadcasts to Redis pub/sub.
-  - Move reminders to a dedicated worker process.
-  - Add operational monitoring for reminder failures.
+Status: Complete
 
+Problem:
+
+The first production shape is intentionally single-host/single-backend, but the
+code does not yet make that operational boundary obvious enough. WebSocket
+broadcasts are in-memory, and the reminder loop runs in-process.
+
+Fix:
+
+- Document that production must run one backend process/container for launch.
+- Add a deployment note that horizontal scaling requires Redis pub/sub for slot
+  broadcasts and a dedicated reminder worker process.
+- Move startup seed behavior into a deliberate one-shot seed command or data
+  migration.
+
+Verification gate:
+
+- Documentation updated.
+- `docker compose -f docker-compose.prod.yml config`
+- `docker compose exec backend python -m pytest`
+
+Completed verification:
+
+- 2026-05-15: `docker compose exec backend python -m app.ops.seed` passed.
+- 2026-05-15: `docker compose config --quiet` passed.
+- 2026-05-15: `docker compose -f docker-compose.prod.yml config --quiet` passed with the local Docker config permission warning only.
+- 2026-05-15: `docker compose exec backend python -m pytest` passed, 75 tests.
+- 2026-05-15: `npm.cmd run test:e2e` passed, 2 browser smoke tests.
+- 2026-05-15: `npm.cmd run test:api-url` passed.
+- 2026-05-15: `npm.cmd run test:datetime` passed.
+- 2026-05-15: `npm.cmd run build` passed.
+
+## Deferred: Customer Waitlist
+
+Status: Deferred product decision
+
+Backend and admin UI support waitlist entries, but customers cannot join a
+waitlist when no slots are available. This is a product-scope decision, not a
+launch blocker unless customer waitlist is required for the first release.

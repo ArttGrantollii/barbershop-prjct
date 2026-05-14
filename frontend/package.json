@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc && vite build",
+    "test:api-url": "tsc -p tsconfig.api-url-test.json && node .tmp/api-url-test/scripts/check-api-url.js",
+    "test:datetime": "tsc -p tsconfig.api-url-test.json && node .tmp/api-url-test/scripts/check-datetime.js",
+    "test:e2e": "playwright test",
     "preview": "vite preview",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0"
   },
@@ -34,6 +37,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@types/node": "^22.5.4",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",

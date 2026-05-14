@@ -29,7 +29,7 @@ function ServiceFormFields({ form, onChange }: { form: ServiceForm; onChange: (k
             onChange={(e) => onChange(key as keyof ServiceForm, e.target.value)}
             placeholder={placeholder}
             required={key !== "description"}
-            min={type === "number" ? "0" : undefined}
+            min={key === "duration_minutes" ? "1" : type === "number" ? "0" : undefined}
             step={key === "price" ? "0.01" : undefined}
             className={fieldStyles}
           />

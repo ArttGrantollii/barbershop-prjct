@@ -4,7 +4,7 @@ import { CalendarPlus, Check, X } from "lucide-react"
 import { parseISO } from "date-fns"
 import { useToast } from "@/hooks/use-toast"
 import { useBusinessInfo } from "@/hooks/useBusinessInfo"
-import { salonDateShort } from "@/lib/datetime"
+import { salonDateShort, salonDateTimeInputToUtcIso } from "@/lib/datetime"
 import api from "@/lib/api"
 import type { Service, StaffWithServices, WaitlistEntry } from "@/types"
 
@@ -14,6 +14,7 @@ export default function AdminWaitlistPage() {
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const { data: business } = useBusinessInfo()
+  const tz = business?.timezone
   const [drafts, setDrafts] = useState<DraftById>({})
   const [form, setForm] = useState({
     customer_name: "",
@@ -77,7 +78,7 @@ export default function AdminWaitlistPage() {
 
   const bookMutation = useMutation({
     mutationFn: ({ id, draft }: { id: string; draft: { date: string; time: string; staff_id: string } }) => {
-      const start_time = new Date(`${draft.date}T${draft.time}`).toISOString()
+      const start_time = salonDateTimeInputToUtcIso(`${draft.date}T${draft.time}`, tz)
       return api.post(`/api/v1/admin/waitlist/${id}/book`, {
         start_time,
         staff_id: draft.staff_id,

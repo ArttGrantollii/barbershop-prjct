@@ -3,6 +3,8 @@ import type { FormEvent } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { CalendarOff, Check, Pencil, Plus, Trash2, X } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { useBusinessInfo } from "@/hooks/useBusinessInfo"
+import { salonDateTimeInputToUtcIso, salonDateTimeInputValue } from "@/lib/datetime"
 import { cn } from "@/lib/utils"
 import api from "@/lib/api"
 import type { Service, StaffBlockedTime, StaffWithServices, StaffWorkingHours } from "@/types"
@@ -39,17 +41,6 @@ function defaultHoursDraft(): HoursDraft {
 
 function toTimeInput(value: string | undefined) {
   return value ? value.slice(0, 5) : ""
-}
-
-function toDateTimeInput(value: string) {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ""
-  const offset = date.getTimezoneOffset()
-  return new Date(date.getTime() - offset * 60_000).toISOString().slice(0, 16)
-}
-
-function dateTimeToIso(value: string) {
-  return new Date(value).toISOString()
 }
 
 function toPayload(form: StaffForm) {
@@ -146,6 +137,8 @@ function StaffFormFields({
 function StaffScheduleEditor({ staffId }: { staffId: string }) {
   const { toast } = useToast()
   const queryClient = useQueryClient()
+  const { data: business } = useBusinessInfo()
+  const tz = business?.timezone
   const [hoursDraft, setHoursDraft] = useState<HoursDraft>(() => defaultHoursDraft())
   const [blockedDraft, setBlockedDraft] = useState({ start_time: "", end_time: "", reason: "" })
 
@@ -191,8 +184,8 @@ function StaffScheduleEditor({ staffId }: { staffId: string }) {
 
   const createBlockedMutation = useMutation({
     mutationFn: () => api.post(`/api/v1/admin/staff/${staffId}/blocked-times`, {
-      start_time: dateTimeToIso(blockedDraft.start_time),
-      end_time: dateTimeToIso(blockedDraft.end_time),
+      start_time: salonDateTimeInputToUtcIso(blockedDraft.start_time, tz),
+      end_time: salonDateTimeInputToUtcIso(blockedDraft.end_time, tz),
       reason: blockedDraft.reason.trim() || null,
     }),
     onSuccess: () => {
@@ -305,7 +298,7 @@ function StaffScheduleEditor({ staffId }: { staffId: string }) {
             <div key={blocked.id} className="flex items-center gap-3 px-4 py-3">
               <div className="flex-1 min-w-0">
                 <p className="text-xs tracking-widest uppercase">
-                  {toDateTimeInput(blocked.start_time).replace("T", " ")} - {toDateTimeInput(blocked.end_time).replace("T", " ")}
+                  {salonDateTimeInputValue(blocked.start_time, tz).replace("T", " ")} - {salonDateTimeInputValue(blocked.end_time, tz).replace("T", " ")}
                 </p>
                 {blocked.reason && <p className="text-xs text-muted-foreground mt-1">{blocked.reason}</p>}
               </div>

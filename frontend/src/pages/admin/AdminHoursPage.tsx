@@ -67,6 +67,7 @@ export default function AdminHoursPage() {
           {Array.from({ length: 7 }, (_, i) => i).map((day, idx) => {
             const row = rows[day]
             if (!row) return null
+            const invalidRange = !row.is_closed && row.close_time <= row.open_time
             return (
               <div
                 key={day}
@@ -115,7 +116,8 @@ export default function AdminHoursPage() {
 
                 <button
                   onClick={() => save(day)}
-                  disabled={saveMutation.isPending}
+                  disabled={saveMutation.isPending || invalidRange}
+                  title={invalidRange ? "Close time must be after open time" : undefined}
                   className="ml-auto text-xs tracking-widest uppercase border border-border px-5 py-2 hover:bg-secondary transition-colors disabled:opacity-50"
                 >
                   Save

@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
+import { getApiWebSocketBaseUrl } from "@/lib/apiUrl"
 import type { TimeSlot } from "@/types"
 
-const WS_BASE = (import.meta.env.VITE_API_URL ?? "http://localhost:8000")
-  .replace(/^https?/, (protocol: string) => (protocol === "https" ? "wss" : "ws"))
+const WS_BASE = getApiWebSocketBaseUrl(import.meta.env.VITE_API_URL)
 
 export function useSlotWebSocket(
   serviceId: string | undefined,

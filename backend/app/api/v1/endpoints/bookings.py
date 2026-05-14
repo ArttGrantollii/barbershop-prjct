@@ -3,7 +3,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_current_active_user, get_current_customer
+from app.core.dependencies import get_current_active_user, get_current_customer, get_current_verified_customer
 from app.db.models.user import User, UserRole
 from app.db.redis import get_redis
 from app.db.repositories.booking_repository import BookingRepository
@@ -32,7 +32,7 @@ async def book(
     body: BookingCreate,
     db: AsyncSession = Depends(get_db),
     redis=Depends(get_redis),
-    current_user: User = Depends(get_current_customer),
+    current_user: User = Depends(get_current_verified_customer),
 ):
     return await create_booking(
         db, redis, current_user.id, body.service_id, body.start_time, body.notes,
@@ -75,7 +75,7 @@ async def reschedule(
     body: BookingRescheduleRequest,
     db: AsyncSession = Depends(get_db),
     redis=Depends(get_redis),
-    current_user: User = Depends(get_current_customer),
+    current_user: User = Depends(get_current_verified_customer),
 ):
     return await reschedule_booking(
         db, redis, booking_id, current_user.id, body.start_time,

@@ -104,3 +104,58 @@ export function salonTzAbbr(tz: string | undefined): string {
   }).formatToParts(new Date())
   return parts.find((p) => p.type === "timeZoneName")?.value ?? ""
 }
+
+export function salonDateTimeInputValue(iso: string | Date, tz: string | undefined): string {
+  const parts = partsInTz(toDate(iso), tz, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  })
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`
+}
+
+function timeZoneOffsetMs(instant: Date, tz: string): number {
+  const parts = partsInTz(instant, tz, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  })
+  const asUtc = Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day),
+    Number(parts.hour),
+    Number(parts.minute),
+    Number(parts.second),
+  )
+  return asUtc - instant.getTime()
+}
+
+export function salonDateTimeInputToUtcIso(value: string, tz: string | undefined): string {
+  if (!tz) return new Date(value).toISOString()
+
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/)
+  if (!match) return new Date(value).toISOString()
+
+  const [, year, month, day, hour, minute] = match
+  const localAsUtc = Date.UTC(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute),
+  )
+
+  let utcMs = localAsUtc
+  for (let i = 0; i < 3; i += 1) {
+    utcMs = localAsUtc - timeZoneOffsetMs(new Date(utcMs), tz)
+  }
+  return new Date(utcMs).toISOString()
+}
