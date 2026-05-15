@@ -76,6 +76,7 @@ class WaitlistEntry(Base, TimestampMixin):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[WaitlistStatus] = mapped_column(
         SQLEnum(WaitlistStatus, values_callable=lambda obj: [e.value for e in obj]),
+        index=True,
         default=WaitlistStatus.ACTIVE,
     )
 

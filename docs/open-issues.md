@@ -1,6 +1,6 @@
 # Open Issues Remediation Plan
 
-Last updated: 2026-05-14
+Last updated: 2026-05-15
 
 This file is the active engineering worklist for the senior-engineer review.
 Work one phase at a time. Do not begin the next phase until the current phase's
@@ -244,6 +244,62 @@ Completed verification:
 - 2026-05-15: `npm.cmd run test:api-url` passed.
 - 2026-05-15: `npm.cmd run test:datetime` passed.
 - 2026-05-15: `npm.cmd run build` passed.
+
+## Phase 8: Final Release Audit
+
+Status: Complete
+
+Problem:
+
+After the launch-hardening phases, run a deeper verification pass across tests,
+builds, Docker, migrations, audit output, and high-risk code paths.
+
+Findings fixed:
+
+- SQLAlchemy model metadata did not fully match applied migrations, so
+  `alembic check` reported drift for account tokens and waitlist status indexes.
+- `npm run lint` existed but had no ESLint 9 flat config.
+- Dev and prod compose builds shared default image tags, so a production build
+  could overwrite the local development frontend image.
+- Vite/esbuild dev tooling had moderate audit advisories. Production
+  dependencies were clean, but upgrading Vite and the React plugin removed the
+  dev advisories too.
+- The home page could crash if the services response was unexpectedly not an
+  array; Playwright now also fails on page errors and console errors.
+- `docs/project-documentation.md` still described already-fixed critical issues.
+
+Verification gate:
+
+- `docker compose exec backend alembic check`
+- `docker compose exec backend python -m pytest`
+- `cd frontend && npm.cmd run lint`
+- `cd frontend && npm.cmd run build`
+- `cd frontend && npm.cmd run test:e2e`
+- `cd frontend && npm.cmd run test:api-url`
+- `cd frontend && npm.cmd run test:datetime`
+- `cd frontend && npm.cmd audit --omit=dev`
+- `cd frontend && npm.cmd audit`
+- `docker compose config --quiet`
+- `docker compose -f docker-compose.prod.yml config --quiet`
+- `docker compose build`
+- `docker compose -f docker-compose.prod.yml build`
+
+Completed verification:
+
+- 2026-05-15: `docker compose exec backend alembic check` passed.
+- 2026-05-15: `docker compose exec backend python -m pytest` passed, 75 tests.
+- 2026-05-15: `npm.cmd run lint` passed.
+- 2026-05-15: `npm.cmd run build` passed.
+- 2026-05-15: `npm.cmd run test:e2e` passed, 2 browser smoke tests.
+- 2026-05-15: `npm.cmd run test:api-url` passed.
+- 2026-05-15: `npm.cmd run test:datetime` passed.
+- 2026-05-15: `npm.cmd audit --omit=dev` passed with 0 vulnerabilities.
+- 2026-05-15: `npm.cmd audit` passed with 0 vulnerabilities.
+- 2026-05-15: `docker compose config --quiet` passed.
+- 2026-05-15: `docker compose -f docker-compose.prod.yml config --quiet`
+  passed with the local Docker config permission warning only.
+- 2026-05-15: `docker compose build` passed.
+- 2026-05-15: `docker compose -f docker-compose.prod.yml build` passed.
 
 ## Deferred: Customer Waitlist
 

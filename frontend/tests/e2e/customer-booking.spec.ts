@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test"
+import { collectRuntimeErrors } from "./runtime-errors"
 
 const user = {
   id: "00000000-0000-4000-8000-000000000001",
@@ -56,6 +57,7 @@ const booking = {
 
 test("customer can complete the booking flow without doubled API paths", async ({ page }) => {
   const apiUrls: string[] = []
+  const runtimeErrors = collectRuntimeErrors(page)
 
   await page.addInitScript(() => {
     window.localStorage.setItem("access_token", "access-token")
@@ -114,4 +116,5 @@ test("customer can complete the booking flow without doubled API paths", async (
   await expect(page).toHaveURL(/\/bookings\/00000000-0000-4000-8000-000000000004\/confirmation/)
   expect(apiUrls.length).toBeGreaterThan(0)
   expect(apiUrls.every((url) => !url.includes("/api/api/v1/"))).toBe(true)
+  expect(runtimeErrors).toEqual([])
 })

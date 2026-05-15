@@ -80,7 +80,8 @@ deployment shape, security group rules, update process, and rollback notes.
 Backend tests are currently easiest to run inside the backend container:
 
 ```powershell
-docker compose exec backend pytest
+docker compose exec backend python -m pytest
+docker compose exec backend alembic check
 ```
 
 The backend suite includes integration tests that create and drop a separate
@@ -93,7 +94,9 @@ Frontend dependencies should be installed from the lockfile:
 ```powershell
 cd frontend
 npm.cmd ci
+npm.cmd run lint
 npm.cmd run build
+npm.cmd audit
 ```
 
 On Windows PowerShell, prefer `npm.cmd` over `npm` if the `npm.ps1` shim hits permission issues.
@@ -131,9 +134,10 @@ Current near-term engineering plan lives in
 [docs/open-issues.md](docs/open-issues.md). Work it phase by phase and run each
 phase's verification gate before starting the next one.
 
-Immediate priority:
+Current launch checklist:
 
-1. Fix production API URL construction.
-2. Enforce the email verification policy for booking mutations.
-3. Fix admin salon-timezone input conversion.
-4. Add user-path route and browser smoke tests.
+1. Configure GitHub branch protection so CI is required before merge.
+2. Prepare production secrets, DNS, host, and database backups.
+3. Run a deployed production smoke test with real Caddy routing.
+4. Remove first-admin seed credentials from production after initial setup.
+5. Decide whether customer-facing waitlist belongs in the first client release.

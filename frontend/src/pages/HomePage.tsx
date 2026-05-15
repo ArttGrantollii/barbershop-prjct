@@ -12,7 +12,10 @@ import type { Service } from "@/types"
 function useServices() {
   return useQuery<Service[]>({
     queryKey: ["services"],
-    queryFn: async () => (await api.get("/api/v1/services")).data,
+    queryFn: async () => {
+      const { data } = await api.get<unknown>("/api/v1/services")
+      return Array.isArray(data) ? data : []
+    },
   })
 }
 

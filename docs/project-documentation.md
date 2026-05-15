@@ -853,6 +853,7 @@ Services:
 - PostgreSQL.
 - Redis.
 - One-shot migration service.
+- One-shot seed service.
 
 Production edge routing:
 
@@ -869,9 +870,12 @@ Implemented in:
 - `frontend/Dockerfile`
 - `docs/deployment.md`
 
-Current critical deployment issue:
+Current deployment state:
 
-- Production currently sets `VITE_API_URL=/api`, while frontend API calls already include `/api/v1/...`. This produces URLs like `/api/api/v1/services`, which return 404. This should be fixed before any production deploy.
+- Production can use `VITE_API_URL=/api` safely. The frontend normalizes the API
+  base so calls like `/api/v1/services` do not become `/api/api/v1/services`.
+- Development and production compose builds use distinct image tags so building
+  one shape does not overwrite the other local image.
 
 ## CI and Validation
 
@@ -881,7 +885,10 @@ CI currently runs:
 
 - Backend tests.
 - Alembic migrations.
+- Alembic migration drift detection.
+- Frontend lint.
 - Frontend build.
+- Frontend Playwright smoke tests.
 - Development compose config validation.
 - Production compose config validation.
 
@@ -892,19 +899,27 @@ Implemented in:
 Current limitation:
 
 - Branch protection must be configured in GitHub settings for CI to actually block merges.
-- CI does not currently catch the production `/api/api/v1` path issue.
 
 ### Current Local Validation Results
 
-Last local validation with Docker running:
+Last local validation with Docker running, 2026-05-15:
 
 - `docker compose ps`: backend, frontend, db, redis running.
 - `docker compose exec backend alembic current`: `0009 (head)`.
+- `docker compose exec backend alembic check`: no new upgrade operations.
 - `/ready`: database OK, Redis OK.
-- `docker compose exec backend python -m pytest`: 58 passed.
+- `docker compose exec backend python -m pytest`: 75 passed.
+- `npm.cmd run lint`: passed.
 - `npm.cmd run build`: passed.
+- `npm.cmd run test:e2e`: 2 passed.
+- `npm.cmd run test:api-url`: passed.
+- `npm.cmd run test:datetime`: passed.
+- `npm.cmd audit --omit=dev`: 0 vulnerabilities.
+- `npm.cmd audit`: 0 vulnerabilities after Vite/tooling upgrade.
 - `docker compose config --quiet`: passed.
 - `docker compose -f docker-compose.prod.yml config --quiet`: passed, with local Docker config permission warning only.
+- `docker compose build`: passed.
+- `docker compose -f docker-compose.prod.yml build`: passed.
 - `curl http://localhost:8000/api/v1/services`: 200.
 - `curl http://localhost:8000/api/api/v1/services`: 404.
 
@@ -917,13 +932,15 @@ Existing backend tests cover:
 - Reminder worker accounting.
 - Account token service.
 - Admin dashboard aggregate behavior.
+- FastAPI route behavior for auth, booking, admin booking, waitlist conversion,
+  audit history, and verified booking dependencies.
 - Database-level same-staff overlap constraint.
 - Different-staff overlapping bookings allowed.
 
 Current limitation:
 
-- There are no real FastAPI route tests for the main API flows.
-- There are no browser/e2e tests for customer and admin workflows.
+- Browser smoke coverage currently focuses on customer booking and logout. A
+  broader admin e2e suite would still be useful before a larger admin release.
 
 ## Configuration
 
@@ -963,78 +980,50 @@ Production-only:
 
 ### Critical
 
-1. Production API path bug.
+No critical code issues are currently open from the senior-engineer remediation
+plan.
 
-   Current `VITE_API_URL=/api` combines with frontend calls like `/api/v1/services` and produces `/api/api/v1/services`.
+### Launch Operations
 
-2. Email verification is not enforced.
+1. Branch protection still needs to be configured in GitHub settings so CI
+   failures block merges to `main`.
 
-   The app records email verification state but does not currently block unverified customers from booking.
+2. Production secrets, DNS, host provisioning, and backup automation are still
+   operator tasks.
 
-### High Priority
+3. After first production seed, remove `FIRST_ADMIN_EMAIL` and
+   `FIRST_ADMIN_PASSWORD` from the production environment.
 
-3. Admin-entered datetimes use browser-local timezone.
+4. Keep the launch deployment to one backend container/process. Horizontal
+   scaling needs Redis pub/sub for slot broadcasts and a dedicated reminder
+   worker process.
 
-   Admin booking creation, waitlist conversion, and staff blocked times use browser-local `Date` conversion. If the admin is in a different timezone from the salon, appointments can be stored at the wrong UTC time.
+### Product Decisions
 
-4. Route-level and browser-flow tests are missing.
-
-   Backend service tests are good, but the project still needs API tests that exercise actual FastAPI routes and at least a basic frontend smoke/e2e path.
-
-5. Customer waitlist flow is missing.
-
-   Waitlist exists for admins, but customers cannot join a waitlist when no slots are available.
+1. Customer-facing waitlist remains deferred. Backend/admin waitlist support
+   exists, but customers cannot join a waitlist from the booking UI unless the
+   client asks for it.
 
 ### Medium Priority
 
-6. Audit trail UI is too thin.
+1. Browser smoke coverage exists for booking and logout, but a broader admin
+   e2e suite would still be useful before heavy admin feature work.
 
-   Backend stores previous/new values, but the admin UI does not display them.
-
-7. Booking notes are underused.
-
-   Notes are saved but not clearly surfaced in admin booking management.
-
-8. Validation hardening is incomplete.
-
-   Examples:
-
-   - Service update should reject non-positive duration and negative prices.
-   - Business hours update should reject invalid open/close ranges.
-   - Blocked date creation should warn or block if confirmed bookings already exist on that date.
-
-9. Security hardening remains MVP-level.
-
-   Examples:
-
-   - Tokens are stored in localStorage.
-   - Frontend logout does not call backend logout.
-   - Password reset/change does not revoke all existing sessions.
-   - Caddy headers do not include CSP or HSTS.
-
-10. Production operations are not fully complete.
-
-   Examples:
-
-   - Branch protection still needs to be enabled in GitHub.
-   - AWS host, DNS, and secrets need to be prepared.
-   - Database backup automation needs to be implemented.
-   - Real staging smoke test has not been documented as completed.
+2. Security hardening can go further after launch: CSP/HSTS headers, refresh
+   token rotation policy review, and broader session revocation after password
+   reset/change.
 
 ## Recommended Next Work
 
 Recommended order:
 
-1. Fix production API base URL handling and test it in CI.
-2. Fix admin timezone handling for booking/waitlist/blocked-time forms.
-3. Enforce or deliberately relax email verification before booking.
-4. Add FastAPI route tests for auth, booking, admin booking, waitlist, and availability.
-5. Add at least one frontend smoke/e2e test for booking flow.
-6. Add customer-facing waitlist if the barber actually wants customers to request unavailable times.
-7. Improve audit history UI and booking notes visibility.
-8. Harden validation and security.
-9. Configure branch protection.
-10. Prepare AWS production secrets, DNS, and backups.
+1. Configure branch protection for `main`.
+2. Prepare production secrets, DNS, host, and backup automation.
+3. Run a deployed staging/production smoke test with real Caddy routing.
+4. Remove first-admin seed credentials from production after initial setup.
+5. Decide whether the client wants customer-facing waitlist.
+6. Add broader admin e2e coverage if admin workflows keep expanding.
+7. Continue security hardening after launch.
 
 ## Future Optional Features
 
@@ -1051,4 +1040,3 @@ Do not build these until the business need is confirmed.
 - Staff payroll/commission reporting.
 - Customer loyalty or membership system.
 - Marketing campaigns.
-
