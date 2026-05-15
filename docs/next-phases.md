@@ -65,6 +65,7 @@ Completed phase order:
 5. Session logout correctness.
 6. Admin operational completeness.
 7. Launch operations and scaling boundary.
+8. Final release audit.
 
 ## Next Decision
 
